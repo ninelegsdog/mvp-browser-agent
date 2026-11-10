@@ -1,0 +1,20 @@
+name: Docs Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "README.md"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate markdown
+        run: |
+          pip install markdownlint-cli2
+          npx markdownlint-cli2 '**/*.md' --ignore node_modules
