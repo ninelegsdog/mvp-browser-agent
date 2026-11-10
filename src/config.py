@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     BOT_TOKEN: str = ""
     BOT_ADMIN_ID: int = 0
 
+    # LLM API (OpenAI-совместимый)
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str = "https://api.openai.com/v1"
+    LLM_MODEL: str = "gpt-4o"
+    LLM_TEMPERATURE: float = 0.3
+    LLM_MAX_TOKENS: int = 2000
+
     BROWSER_PROFILE_DIR: str = "./browser-profile"
     BROWSER_HEADLESS: bool = False
     BROWSER_VIEWPORT_WIDTH: int = 1280
