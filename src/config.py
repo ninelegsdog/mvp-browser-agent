@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from pydantic import model_validator
+from typing import List, Self
 
 
 class Settings(BaseSettings):
@@ -36,6 +37,19 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
     }
+
+    @model_validator(mode="after")
+    def validate_required_settings(self) -> Self:
+        """Валидация критичных настроек — приложение не стартует без них."""
+        if not self.BOT_TOKEN:
+            raise ValueError("BOT_TOKEN обязателен для запуска")
+        if self.BOT_ADMIN_ID == 0:
+            raise ValueError("BOT_ADMIN_ID обязателен и не должен быть 0")
+        if not self.DB_PASSWORD:
+            raise ValueError("DB_PASSWORD обязателен для запуска")
+        if not self.REDIS_PASSWORD:
+            raise ValueError("REDIS_PASSWORD обязателен для запуска")
+        return self
 
 
 settings = Settings()

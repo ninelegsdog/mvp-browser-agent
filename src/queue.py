@@ -12,6 +12,7 @@
 import asyncio
 import json
 import logging
+import random
 import signal
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -23,6 +24,7 @@ import redis.asyncio as redis
 from src.config import settings, PRIORITY_QUEUES
 from src.security import assert_no_secrets_in_text
 from src.agent import agent as agent_instance
+from src.metrics import RETRY_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,11 @@ MAX_RETRIES = 2
 MAX_CONCURRENCY = 2
 BRPOP_TIMEOUT = 30
 TASK_TTL_SECONDS = 86400  # 24 часа
+
+# Экспоненциальный бэк офф с jitter
+BACKOFF_BASE_SECONDS = 5   # базовая задержка перед первым повтором
+BACKOFF_MAX_SECONDS = 300  # maximale задержка 5 минут
+BACKOFF_JITTER_SECONDS = 10  # диапазон джиттера
 
 ERROR_CATEGORY_NETWORK = "network"
 ERROR_CATEGORY_CAPTCHA = "captcha"
@@ -187,18 +194,29 @@ class TaskQueue:
         data = await self._redis.hget(RESULTS_KEY, task_id)
         return json.loads(data) if data else None
 
+    async def _backoff_delay(self, retries: int) -> float:
+        """Экспоненциальный бэк офф с jitter."""
+        delay = min(BACKOFF_BASE_SECONDS * (2 ** retries), BACKOFF_MAX_SECONDS)
+        jitter = random.uniform(0, BACKOFF_JITTER_SECONDS)
+        return delay + jitter
+
     async def fail(self, task: Task, error: Exception) -> None:
         """Retry-or-DLQ. Сохраняем приоритет при повторной постановке."""
         retries = task.retries
         if retries < MAX_RETRIES:
             task.retries = retries + 1
+            delay = await self._backoff_delay(retries)
+            await asyncio.sleep(delay)
             await self.enqueue(task)
             assert_no_secrets_in_text(str(error), "queue.fail")
             logger.warning(
-                "Task %s failed (retry %d/%d): %s", task.task_id, task.retries, MAX_RETRIES, error
+                "Task %s failed (retry %d/%d, retry in %.1fs): %s",
+                task.task_id, task.retries, MAX_RETRIES, delay, error
             )
         else:
             category = categorize_error(error)
+            if RETRY_COUNT:
+                RETRY_COUNT.labels(queue=task.priority, error_category=category).observe(task.retries)
             await self._redis.lpush(
                 settings.DLQ,
                 json.dumps(

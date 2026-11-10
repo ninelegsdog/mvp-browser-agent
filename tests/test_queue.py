@@ -57,6 +57,11 @@ async def test_retry_then_dlq():
 
     task = Task(task_id="fail", input="boom", priority="med", retries=MAX_RETRIES)
 
+    # Мокаем _backoff_delay, чтобы не ждать реальную задержку
+    async def fake_backoff(retries):
+        return 0.01
+    q._backoff_delay = fake_backoff
+
     try:
         await q.fail(task, Exception("test"))
     except Exception:
@@ -179,6 +184,12 @@ async def test_dlq_error_category():
     q._redis = r
 
     task = Task(task_id="fail-captcha", input="boom", priority="med", retries=MAX_RETRIES)
+
+    # Мокаем _backoff_delay, чтобы не ждать реальную задержку
+    async def fake_backoff(retries):
+        return 0.01
+    q._backoff_delay = fake_backoff
+
     await q.fail(task, Exception("captcha required"))
 
     dlq_items = await r.lrange(settings.DLQ, 0, -1)

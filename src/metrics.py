@@ -36,8 +36,11 @@ if Counter:
     QUEUE_DEPTH = Counter(
         "mvp_agent_queue_depth", "Текущая глубина очереди", ["queue"]
     )
+    RETRY_COUNT = Histogram(
+        "mvp_agent_retry_count", "Количество повторов задачи", ["queue", "error_category"]
+    )
 else:
-    UPDATES_TOTAL = ERRORS_TOTAL = HANDLER_DURATION = QUEUE_DEPTH = None
+    UPDATES_TOTAL = ERRORS_TOTAL = HANDLER_DURATION = QUEUE_DEPTH = RETRY_COUNT = None
 
 
 async def metrics_handler(request):

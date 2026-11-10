@@ -18,6 +18,7 @@ from typing import Optional
 from playwright.async_api import async_playwright, BrowserContext, Page
 
 from src.config import settings
+from src.browser_encryption import encrypt_directory_contents, decrypt_directory_contents, is_encrypted
 from src.security import check_profile_permissions, assert_no_secrets_in_text
 
 TARGET_SITES = ["https://www.ozon.ru", "https://www.avito.ru", "https://www.wildberries.ru"]
@@ -52,6 +53,11 @@ class BrowserSession:
         if not check_profile_permissions(self.profile_dir):
             logger.warning("Profile dir %s is not 0700 — fixing", self.profile_dir)
             os.chmod(self.profile_dir, 0o700)
+
+        # Расшифровываем профиль перед запуском, если он зашифрован
+        if is_encrypted(self.profile_dir):
+            logger.info("Профиль браузера зашифрован — расшифровываем перед запуском")
+            decrypt_directory_contents(self.profile_dir)
 
         context_options = {
             "headless": self.headless,
@@ -124,6 +130,11 @@ class BrowserSession:
         if self._playwright:
             await self._playwright.stop()
         logger.info("Browser session closed")
+
+        # Шифруем профиль после остановки, чтобы защитить сессию на диске
+        if self.profile_dir and Path(self.profile_dir).exists():
+            encrypted_count = encrypt_directory_contents(self.profile_dir)
+            logger.info("Профиль браузера зашифрован (%d файлов)", encrypted_count)
 
     @property
     def page(self) -> Page:
