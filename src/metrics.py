@@ -255,3 +255,35 @@ def get_slo_status() -> Dict[str, Any]:
         "latency_p95_target": SLO_LATENCY_P95_TARGET,
         "error_rate_target": SLO_ERROR_RATE_TARGET,
     }
+
+
+# --- Бизнес-метрики ---
+
+BUSINESS_TASKS_COMPLETED = Counter(
+    "mvp_agent_business_tasks_completed_total",
+    "Всего выполнено бизнес-задач",
+    ["task_type"],
+)
+
+BUSINESS_TASK_DURATION = Histogram(
+    "mvp_agent_business_task_duration_seconds",
+    "Длительность выполнения бизнес-задач",
+    ["task_type"],
+    buckets=[1, 5, 10, 30, 60, 300, 600],
+)
+
+
+def record_business_task(task_type: str, duration_seconds: float, success: bool = True):
+    """Зарегистрировать выполненную бизнес-задачу."""
+    if TASK_SUCCESS_TOTAL:
+        if success:
+            TASK_SUCCESS_TOTAL.labels(type=task_type).inc()
+        else:
+            if TASK_FAILURE_TOTAL:
+                TASK_FAILURE_TOTAL.labels(type=task_type, error_category="other").inc()
+
+    if BUSINESS_TASKS_COMPLETED:
+        BUSINESS_TASKS_COMPLETED.labels(task_type=task_type).inc()
+
+    if BUSINESS_TASK_DURATION:
+        BUSINESS_TASK_DURATION.labels(task_type=task_type).observe(duration_seconds)

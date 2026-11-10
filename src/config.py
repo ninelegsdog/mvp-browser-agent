@@ -1,6 +1,15 @@
+import sys
 from pydantic_settings import BaseSettings
 from pydantic import model_validator
 from typing import List, Self
+
+
+# Проверка версии Python при старте
+MIN_PYTHON_VERSION = (3, 12)
+if sys.version_info < MIN_PYTHON_VERSION:
+    print(f"Ошибка: требуется Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}+, "
+          f"установлен {sys.version_info[0]}.{sys.version_info[1]}", file=sys.stderr)
+    sys.exit(1)
 
 
 class Settings(BaseSettings):
