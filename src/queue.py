@@ -25,6 +25,7 @@ from src.config import settings, PRIORITY_QUEUES
 from src.security import assert_no_secrets_in_text
 from src.agent import agent as agent_instance
 from src.metrics import RETRY_COUNT
+from src.queue_interface import TaskQueueInterface
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class Task:
         )
 
 
-class TaskQueue:
+class TaskQueue(TaskQueueInterface):
     def __init__(self, redis_url: str = None):
         self.redis_url = redis_url or settings.REDIS_URL
         self._redis = None
