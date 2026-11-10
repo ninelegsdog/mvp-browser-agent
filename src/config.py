@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     BOT_ADMIN_ID: int = 0
 
     BROWSER_PROFILE_DIR: str = "./browser-profile"
-    BROWSER_HEADLESS: bool = True
+    BROWSER_HEADLESS: bool = False
     BROWSER_VIEWPORT_WIDTH: int = 1280
     BROWSER_VIEWPORT_HEIGHT: int = 800
 

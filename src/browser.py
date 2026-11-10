@@ -49,8 +49,10 @@ class BrowserSession:
         self.navigation_timeout_ms = navigation_timeout_ms
         self.action_timeout_ms = action_timeout_ms
         self._playwright = None
+        self._browser = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
+        self._contexts: Dict[str, BrowserContext] = {}
 
     async def start(self) -> None:
         Path(self.profile_dir).mkdir(parents=True, exist_ok=True, mode=0o700)

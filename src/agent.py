@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from src.browser import BrowserSession
+from src.browser_tool import BrowserTool
 from src.config import settings
 from src.proof import EvidenceRecorder
 from src.security import assert_no_secrets_in_text
@@ -155,7 +157,7 @@ class Agent:
 
 
 # ---------------------------------------------------------------------------
-# Инструменты (заглушки, подменяются реальной логикой в проде)
+# Инструменты (заглушки для shell/http/memory, браузер — реальный Playwright)
 # ---------------------------------------------------------------------------
 
 async def shell_tool(input: str, task_id: str) -> str:
@@ -170,22 +172,20 @@ async def http_tool(input: str, task_id: str) -> str:
     return f"http response for: {input[:50]}"
 
 
-async def browser_tool(input: str, task_id: str) -> str:
-    """Браузерное действие по сценарию (не автономный выбор модели)."""
-    await asyncio.sleep(0.5)
-    return f"browser action: {input[:50]}"
-
-
 async def memory_tool(input: str, task_id: str) -> str:
     """Чтение/запись в памяти задачи (состояние, предпочтения)."""
     await asyncio.sleep(0.1)
     return f"memory: {input[:50]}"
 
 
+# Сессия браузера с постоянным профилем (запускается при первом использовании)
+browser_session = BrowserSession()
+browser_tool = BrowserTool(browser_session)
+
 TOOLS = {
     "shell": Tool("shell", shell_tool, "Выполнить команду shell"),
     "http": Tool("http", http_tool, "HTTP-запрос к внешнему сервису"),
-    "browser": Tool("browser", browser_tool, "Действие в браузере по сценарию"),
+    "browser": browser_tool,  # Реальный Playwright браузер, не заглушка
     "memory": Tool("memory", memory_tool, "Память задачи и предпочтений"),
 }
 
