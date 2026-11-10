@@ -107,11 +107,51 @@ async def alerts_handler(request):
     return web.json_response({"status": "ok", "alerts": []})
 
 
+async def liveness_handler(request):
+    """Liveness probe - приложение живо."""
+    return web.json_response({"status": "alive"})
+
+
+async def readiness_handler(request):
+    """Readiness probe - приложение готово принимать трафик."""
+    checks = {"redis": False, "postgres": False}
+    try:
+        import redis.asyncio as redis_async
+        r = redis_async.from_url(settings.REDIS_URL, decode_responses=True)
+        await r.ping()
+        checks["redis"] = True
+        await r.aclose()
+    except Exception:
+        pass
+
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(
+            host=settings.DB_HOST,
+            port=settings.DB_PORT,
+            user=settings.DB_USER,
+            password=settings.DB_PASSWORD,
+            database=settings.DB_NAME,
+            timeout=3,
+        )
+        await conn.fetch("SELECT 1")
+        checks["postgres"] = True
+        await conn.close()
+    except Exception:
+        pass
+
+    all_ready = all(checks.values())
+    status_code = 200 if all_ready else 503
+    return web.json_response({"status": "ready" if all_ready else "not_ready", "checks": checks}, status=status_code)
+
+
 def create_metrics_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/metrics", metrics_handler)
     app.router.add_get("/health", health_handler)
     app.router.add_get("/alerts", alerts_handler)
+    app.router.add_get("/live", liveness_handler)
+    app.router.add_get("/ready", readiness_handler)
     return app
 
 
