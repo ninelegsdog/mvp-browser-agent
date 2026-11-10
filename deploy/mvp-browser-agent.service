@@ -1,0 +1,28 @@
+[Unit]
+Description=MVP Browser Agent - Personal Shopping Assistant
+After=network.target postgresql.service redis.service
+Wants=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=mvp-agent
+Group=mvp-agent
+WorkingDirectory=/opt/mvp-browser-agent
+EnvironmentFile=/etc/mvp-browser-agent/.env
+ExecStartPre=/usr/bin/docker compose -f /opt/mvp-browser-agent/docker-compose.prod.yml up -d redis postgres
+ExecStart=/usr/bin/python3 -m src.telegram_bot &
+ExecStart=/usr/bin/python3 -m src.queue worker
+ExecStop=/usr/bin/docker compose -f /opt/mvp-browser-agent/docker-compose.prod.yml down
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Безопасность
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/mvp-browser-agent/evidence /opt/mvp-browser-agent/browser-profile
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
