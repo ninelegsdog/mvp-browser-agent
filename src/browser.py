@@ -71,7 +71,6 @@ class BrowserSession:
 
         # Первичный контекст с постоянным профилем
         context_options = {
-            "headless": self.headless,
             "viewport": self.viewport,
             "locale": "ru-RU",
         }
@@ -86,7 +85,9 @@ class BrowserSession:
             await self._context.add_init_script(
                 f"localStorage.clear(); sessionStorage.clear();"
             )
-        self._page = self._context.pages()[0] if self._context.pages() else await self._context.new_page()
+        pages = self._context.pages if callable(self._context.pages) else self._context.pages
+        pages_list = pages() if callable(pages) else pages
+        self._page = pages_list[0] if pages_list else await self._context.new_page()
         self._contexts: Dict[str, BrowserContext] = {"default": self._context}
         logger.info("Browser session started, profile=%s, contexts=%d", self.profile_dir, len(self._contexts))
 
@@ -204,7 +205,6 @@ class BrowserSession:
         if context_id in self._contexts:
             raise ValueError(f"Context {context_id} already exists")
         context = await self._browser.new_context(
-            headless=self.headless,
             viewport=self.viewport,
             locale="ru-RU",
         )
