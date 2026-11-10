@@ -36,6 +36,8 @@ class BrowserSession:
         viewport_width: int = None,
         viewport_height: int = None,
         record_video_dir: str = None,
+        navigation_timeout_ms: int = 30000,
+        action_timeout_ms: int = 10000,
     ):
         self.profile_dir = profile_dir or settings.BROWSER_PROFILE_DIR
         self.headless = headless if headless is not None else settings.BROWSER_HEADLESS
@@ -44,6 +46,8 @@ class BrowserSession:
             "height": viewport_height or settings.BROWSER_VIEWPORT_HEIGHT,
         }
         self.record_video_dir = record_video_dir
+        self.navigation_timeout_ms = navigation_timeout_ms
+        self.action_timeout_ms = action_timeout_ms
         self._playwright = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
@@ -88,6 +92,18 @@ class BrowserSession:
         except Exception:
             return False
 
+    async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> Page:
+        """Перейти по URL с таймаутом навигации."""
+        if not self._context:
+            raise RuntimeError("Browser not started")
+        page = await self._context.new_page()
+        try:
+            await page.goto(url, timeout=self.navigation_timeout_ms, wait_until=wait_until)
+        except Exception as e:
+            await page.close()
+            raise e
+        return page
+
     async def health_check_sites(self) -> dict:
         """Проверить доступность целевых сайтов перед началом задач.
 
@@ -98,8 +114,7 @@ class BrowserSession:
             return results
         for url in TARGET_SITES:
             try:
-                page = await self._context.new_page()
-                await page.goto(url, timeout=10000, wait_until="domcontentloaded")
+                page = await self.navigate(url, wait_until="domcontentloaded")
                 results[url] = True
                 await page.close()
             except Exception as e:
@@ -107,13 +122,22 @@ class BrowserSession:
                 logger.warning("Site %s unavailable: %s", url, e)
         return results
 
-    async def new_page(self, block_resources: bool = False) -> Page:
-        """Создать новую страницу. При block_resources=True блокируются картинки/CSS/шрифты."""
+    async def new_page(self, block_resources: bool = False, auto_dismiss_cookies: bool = True, handle_dialogs: bool = True) -> Page:
+        """Создать новую страницу.
+
+        При block_resources=True блокируются картинки/CSS/шрифты.
+        При auto_dismiss_cookies=True автоматически отменяет баннеры куки.
+        При handle_dialogs=True автоматически принимает диалоги (alert/confirm/prompt).
+        """
         if not self._context:
             raise RuntimeError("Browser not started")
         page = await self._context.new_page()
         if block_resources:
             await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,ico}", lambda route: route.abort())
+        if auto_dismiss_cookies:
+            await self._setup_cookie_banner_handler(page)
+        if handle_dialogs:
+            await self._setup_dialog_handler(page)
         return page
 
     async def block_non_essential_resources(self, page: Page) -> None:
@@ -123,6 +147,44 @@ class BrowserSession:
             raise RuntimeError("Browser not started")
         page = await self._context.new_page()
         return page
+
+    async def _setup_cookie_banner_handler(self, page: Page) -> None:
+        """Автоматически отклонять баннеры куки на известных селекторах."""
+        cookie_selectors = [
+            'button:has-text("Отклонить")',
+            'button:has-text("Reject")',
+            'button:has-text("Отказаться")',
+            'button:has-text("Decline")',
+            'button:has-text("Only essential")',
+            'button:has-text("Только необходимые")',
+            '[data-testid="cookie-reject"]',
+            '[aria-label="Reject cookies"]',
+            '[aria-label="Отклонить куки"]',
+        ]
+
+        async def handle_cookie_banner():
+            for selector in cookie_selectors:
+                try:
+                    element = page.locator(selector).first
+                    if await element.is_visible(timeout=2000):
+                        await element.click(timeout=2000)
+                        logger.info("Отклонён баннер куки: %s", selector)
+                except Exception:
+                    pass
+
+        # Проверяем при загрузке страницы
+        page.on("load", lambda _: asyncio.create_task(handle_cookie_banner()))
+
+    async def _setup_dialog_handler(self, page: Page) -> None:
+        """Автоматически принимать или отклонять диалоги (alert, confirm, prompt)."""
+        async def handle_dialog(dialog):
+            dialog_type = dialog.type
+            message = dialog.message[:100] if dialog.message else ""
+            logger.warning("Диалог %s: %s", dialog_type, message)
+            # По умолчанию принимаем диалоги (подтверждаем действие)
+            await dialog.accept()
+
+        page.on("dialog", handle_dialog)
 
     async def close(self) -> None:
         if self._context:
