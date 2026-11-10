@@ -8,6 +8,7 @@
 """
 
 import logging
+import tracemalloc
 from typing import Any, Dict, Optional
 
 from aiohttp import web
@@ -145,6 +146,17 @@ async def readiness_handler(request):
     return web.json_response({"status": "ready" if all_ready else "not_ready", "checks": checks}, status=status_code)
 
 
+async def slo_handler(request):
+    """SLO/SLI статус."""
+    return web.json_response(get_slo_status())
+
+
+async def memory_handler(request):
+    """Мониторинг использования памяти."""
+    start_memory_tracing()
+    return web.json_response(get_memory_usage())
+
+
 def create_metrics_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/metrics", metrics_handler)
@@ -152,6 +164,8 @@ def create_metrics_app() -> web.Application:
     app.router.add_get("/alerts", alerts_handler)
     app.router.add_get("/live", liveness_handler)
     app.router.add_get("/ready", readiness_handler)
+    app.router.add_get("/slo", slo_handler)
+    app.router.add_get("/memory", memory_handler)
     return app
 
 
@@ -202,3 +216,42 @@ def check_success_rate_alert() -> Optional[Dict[str, Any]]:
             "message": f"Successful rate {rate:.2%} below threshold {SUCCESS_RATE_THRESHOLD:.0%}",
         }
     return None
+
+
+# --- SLO/SLI метрики ---
+
+SLO_UPTIME_TARGET = 99.9  # %
+SLO_LATENCY_P95_TARGET = 2.0  # секунды
+SLO_ERROR_RATE_TARGET = 1.0  # %
+
+MEMORY_TRACING_ENABLED = False
+
+
+def start_memory_tracing():
+    """Включить отслеживание выделения памяти."""
+    global MEMORY_TRACING_ENABLED
+    if not MEMORY_TRACING_ENABLED:
+        tracemalloc.start()
+        MEMORY_TRACING_ENABLED = True
+
+
+def get_memory_usage() -> Optional[Dict[str, float]]:
+    """Получить текущее использование памяти."""
+    if not MEMORY_TRACING_ENABLED:
+        return None
+    current, peak = tracemalloc.get_traced_memory()
+    return {
+        "current_bytes": current,
+        "peak_bytes": peak,
+        "current_mb": current / (1024 * 1024),
+        "peak_mb": peak / (1024 * 1024),
+    }
+
+
+def get_slo_status() -> Dict[str, Any]:
+    """Получить статус SLO/SLI."""
+    return {
+        "uptime_target": SLO_UPTIME_TARGET,
+        "latency_p95_target": SLO_LATENCY_P95_TARGET,
+        "error_rate_target": SLO_ERROR_RATE_TARGET,
+    }
