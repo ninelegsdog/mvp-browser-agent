@@ -11,7 +11,7 @@
 
 import asyncio
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from playwright.async_api import Page, ElementHandle, Locator
 
@@ -19,35 +19,90 @@ logger = logging.getLogger(__name__)
 
 
 class SmartLocator:
-    """Поиск элемента с перебором стратегий селекторов."""
+    """Поиск элемента с перебором стратегий селекторов.
+
+    Поддерживает self-healing: запоминает успешные селекторы и использует их
+    первыми при следующих вызовах.
+    """
 
     def __init__(self, page: Page, timeout_ms: int = 5000):
         self.page = page
         self.timeout_ms = timeout_ms
+        self._successful_selectors: Dict[str, List[str]] = {}
 
-    async def locate(self, *strategies: str) -> Optional[Locator]:
+    async def locate(self, element_key: str, *strategies: str) -> Optional[Locator]:
         """Попробовать стратегии селекторов по очереди.
 
         Пример:
             locator = SmartLocator(page, timeout_ms=3000)
             element = await locator.locate(
+                'submit_button',
                 'role=button[name="Отправить"]',
                 'text=Отправить',
                 '[data-testid="submit-btn"]',
                 'button.submit',
             )
         """
-        for strategy in strategies:
+        # Сначала пробуем ранее успешные селекторы для этого элемента
+        cached = self._successful_selectors.get(element_key, [])
+        all_strategies = cached + [s for s in strategies if s not in cached]
+
+        for strategy in all_strategies:
             try:
                 locator = self.page.locator(strategy)
                 element = await locator.first
-                if await element.is_visible(timeout=self.timeout_ms // len(strategies)):
-                    logger.info("Селектор найден: %s", strategy)
+                if await element.is_visible(timeout=self.timeout_ms // max(len(all_strategies), 1)):
+                    # Запомнить успешный селектор
+                    if strategy not in self._successful_selectors.get(element_key, []):
+                        self._successful_selectors.setdefault(element_key, []).insert(0, strategy)
+                        # Ограничиваем размер кэша
+                        if len(self._successful_selectors[element_key]) > 5:
+                            self._successful_selectors[element_key] = self._successful_selectors[element_key][:5]
+                    logger.info("Селектор найден: %s (элемент: %s)", strategy, element_key)
                     return locator
             except Exception as e:
                 logger.debug("Селектор не сработал: %s (%s)", strategy, e)
                 continue
-        logger.warning("Ни один селектор не сработал из %d", len(strategies))
+        logger.warning("Ни один селектор не сработал для %s из %d", element_key, len(all_strategies))
+        return None
+
+    async def click(self, element_key: str, *strategies: str) -> bool:
+        """Найти элемент и кликнуть по нему."""
+        locator = await self.locate(element_key, *strategies)
+        if locator is None:
+            return False
+        try:
+            await locator.first.click(timeout=self.timeout_ms)
+            logger.info("Клик выполнен по элементу %s", element_key)
+            return True
+        except Exception as e:
+            logger.warning("Клик не удался: %s", e)
+            return False
+
+    async def fill(self, value: str, element_key: str, *strategies: str) -> bool:
+        """Найти поле и заполнить значением."""
+        locator = await self.locate(element_key, *strategies)
+        if locator is None:
+            return False
+        try:
+            await locator.first.fill(value, timeout=self.timeout_ms)
+            logger.info("Поле %s заполнено: %s", element_key, value[:50])
+            return True
+        except Exception as e:
+            logger.warning("Заполнение не удалось: %s", e)
+            return False
+
+    async def wait_for(self, element_key: str, *strategies: str) -> Optional[Locator]:
+        """Дождаться появления любого из селекторов."""
+        for strategy in strategies:
+            try:
+                locator = self.page.locator(strategy)
+                await locator.first.wait_for(state="visible", timeout=self.timeout_ms)
+                logger.info("Селектор apareció: %s (элемент: %s)", strategy, element_key)
+                return locator
+            except Exception as e:
+                logger.debug("Селектор не encontrado: %s (%s)", strategy, e)
+                continue
         return None
 
     async def click(self, *strategies: str) -> bool:
