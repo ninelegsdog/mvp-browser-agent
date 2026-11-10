@@ -13,7 +13,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from playwright.async_api import async_playwright, BrowserContext, Page
 
@@ -63,24 +63,32 @@ class BrowserSession:
             logger.info("Профиль браузера зашифрован — расшифровываем перед запуском")
             decrypt_directory_contents(self.profile_dir)
 
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=self.headless,
+            args=["--lang=ru-RU", "--no-sandbox", "--disable-setuid-sandbox"],
+        )
+
+        # Первичный контекст с постоянным профилем
         context_options = {
             "headless": self.headless,
             "viewport": self.viewport,
             "locale": "ru-RU",
-            "args": ["--lang=ru-RU"],
         }
         if self.record_video_dir:
             Path(self.record_video_dir).mkdir(parents=True, exist_ok=True)
             context_options["record_video_dir"] = self.record_video_dir
             context_options["record_video_size"] = self.viewport
 
-        self._playwright = await async_playwright().start()
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            self.profile_dir,
-            **context_options,
-        )
+        self._context = await self._browser.new_context(**context_options)
+        # Применяем постоянный профиль через хранилище состояния
+        if self.profile_dir and Path(self.profile_dir).exists():
+            await self._context.add_init_script(
+                f"localStorage.clear(); sessionStorage.clear();"
+            )
         self._page = self._context.pages()[0] if self._context.pages() else await self._context.new_page()
-        logger.info("Browser session started, profile=%s", self.profile_dir)
+        self._contexts: Dict[str, BrowserContext] = {"default": self._context}
+        logger.info("Browser session started, profile=%s, contexts=%d", self.profile_dir, len(self._contexts))
 
     async def check_session(self, selector: str = ".chatlist, .chat-container", timeout_ms: int = 60000) -> bool:
         """Проверка, что сессия жива (элемент присутствует в DOM)."""
@@ -186,9 +194,46 @@ class BrowserSession:
 
         page.on("dialog", handle_dialog)
 
+    async def create_isolated_context(self, context_id: str = "isolated") -> BrowserContext:
+        """Создать изолированный контекст браузера (отдельные куки, хранилище, сессия).
+
+        Полезно для работы с разными аккаунтами одновременно.
+        """
+        if not self._browser:
+            raise RuntimeError("Browser not started")
+        if context_id in self._contexts:
+            raise ValueError(f"Context {context_id} already exists")
+        context = await self._browser.new_context(
+            headless=self.headless,
+            viewport=self.viewport,
+            locale="ru-RU",
+        )
+        self._contexts[context_id] = context
+        logger.info("Создан изолированный контекст %s (всего %d)", context_id, len(self._contexts))
+        return context
+
+    async def get_context(self, context_id: str = "default") -> BrowserContext:
+        """Получить контекст по ID."""
+        if context_id not in self._contexts:
+            raise ValueError(f"Context {context_id} not found")
+        return self._contexts[context_id]
+
+    async def close_context(self, context_id: str) -> None:
+        """Закрыть конкретный контекст."""
+        if context_id not in self._contexts:
+            logger.warning("Context %s not found for closing", context_id)
+            return
+        context = self._contexts[context_id]
+        await context.close()
+        del self._contexts[context_id]
+        logger.info("Контекст %s закрыт (осталось %d)", context_id, len(self._contexts))
+
     async def close(self) -> None:
-        if self._context:
-            await self._context.close()
+        # Закрываем все контексты
+        for context_id in list(self._contexts.keys()):
+            await self.close_context(context_id)
+        if self._browser:
+            await self._browser.close()
         if self._playwright:
             await self._playwright.stop()
         logger.info("Browser session closed")
