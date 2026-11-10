@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "I", "N", "Q", "S", "UP", "B", "C4", "PL", "PERF", "RET", "SIM", "TID", "TRY"]
+fixable = ["E", "F", "I", "N", "Q", "S", "UP", "B", "C4", "PL", "PERF", "RET", "SIM", "TID", "TRY"]
+unfixable = ["S108", "S307"]
+exclude = ["__pycache__", ".pytest_cache", "evidence", "browser-profile", "build", "dist"]
+
+[tool.ruff.isort]
+known-first-party = ["src"]
+profile = "black"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests (live services)",
+]
+testpaths = ["tests"]
+addopts = ["--cov=src", "--cov-report=term-missing", "--cov-fail-under=25"]

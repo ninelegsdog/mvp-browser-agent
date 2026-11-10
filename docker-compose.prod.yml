@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mvp-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-mvp_agent}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-mvp_agent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mvp-network
+
+  mvp-browser-agent:
+    build: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-}@redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-mvp_agent}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      BOT_TOKEN: ${BOT_TOKEN}
+      BOT_ADMIN_ID: ${BOT_ADMIN_ID}
+      BROWSER_PROFILE_DIR: /app/browser-profile
+      BROWSER_HEADLESS: "true"
+      EVIDENCE_DIR: /app/evidence
+      LOG_LEVEL: INFO
+      METRICS_PORT: 9090
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./evidence:/app/evidence
+      - ./browser-profile:/app/browser-profile
+    restart: unless-stopped
+    networks:
+      - mvp-network
+
+networks:
+  mvp-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  pg_data:
