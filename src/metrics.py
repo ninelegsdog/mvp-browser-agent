@@ -8,6 +8,8 @@
 """
 
 import logging
+from typing import Any, Dict, Optional
+
 from aiohttp import web
 
 try:
@@ -39,8 +41,14 @@ if Counter:
     RETRY_COUNT = Histogram(
         "mvp_agent_retry_count", "Количество повторов задачи", ["queue", "error_category"]
     )
+    TASK_SUCCESS_TOTAL = Counter(
+        "mvp_agent_task_success_total", "Успешные задачи", ["type"]
+    )
+    TASK_FAILURE_TOTAL = Counter(
+        "mvp_agent_task_failure_total", "Неуспешные задачи", ["type", "error_category"]
+    )
 else:
-    UPDATES_TOTAL = ERRORS_TOTAL = HANDLER_DURATION = QUEUE_DEPTH = RETRY_COUNT = None
+    UPDATES_TOTAL = ERRORS_TOTAL = HANDLER_DURATION = QUEUE_DEPTH = RETRY_COUNT = TASK_SUCCESS_TOTAL = TASK_FAILURE_TOTAL = None
 
 
 async def metrics_handler(request):
@@ -91,10 +99,19 @@ async def health_handler(request):
     return web.json_response({"status": overall, "checks": checks}, status=status_code)
 
 
+async def alerts_handler(request):
+    """Эндпоинт для проверки алертов."""
+    alert = check_success_rate_alert()
+    if alert:
+        return web.json_response(alert, status=503)
+    return web.json_response({"status": "ok", "alerts": []})
+
+
 def create_metrics_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/metrics", metrics_handler)
     app.router.add_get("/health", health_handler)
+    app.router.add_get("/alerts", alerts_handler)
     return app
 
 
@@ -106,3 +123,42 @@ async def start_metrics_server(port: int = 9090):
     await site.start()
     logger.info("Metrics server started on port %d", port)
     return runner
+
+
+# --- Алерты ---
+
+SUCCESS_RATE_THRESHOLD = 0.90  # 90% успешных задач
+
+
+def get_success_rate() -> Optional[float]:
+    """Рассчитать successful rate на основе накопленных счётчиков."""
+    if TASK_SUCCESS_TOTAL is None or TASK_FAILURE_TOTAL is None:
+        return None
+    try:
+        success = sum(
+            s.value for s in TASK_SUCCESS_TOTAL._metrics.values()
+        ) if hasattr(TASK_SUCCESS_TOTAL, '_metrics') else 0
+        failure = sum(
+            s.value for s in TASK_FAILURE_TOTAL._metrics.values()
+        ) if hasattr(TASK_FAILURE_TOTAL, '_metrics') else 0
+        total = success + failure
+        if total == 0:
+            return None
+        return success / total
+    except Exception:
+        return None
+
+
+def check_success_rate_alert() -> Optional[Dict[str, Any]]:
+    """Проверить successful rate и вернуть алерт если ниже порога."""
+    rate = get_success_rate()
+    if rate is None:
+        return None
+    if rate < SUCCESS_RATE_THRESHOLD:
+        return {
+            "alert": "success_rate_below_threshold",
+            "current_rate": rate,
+            "threshold": SUCCESS_RATE_THRESHOLD,
+            "message": f"Successful rate {rate:.2%} below threshold {SUCCESS_RATE_THRESHOLD:.0%}",
+        }
+    return None

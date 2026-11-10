@@ -24,7 +24,7 @@ import redis.asyncio as redis
 from src.config import settings, PRIORITY_QUEUES
 from src.security import assert_no_secrets_in_text
 from src.agent import agent as agent_instance
-from src.metrics import RETRY_COUNT
+from src.metrics import RETRY_COUNT, TASK_SUCCESS_TOTAL, TASK_FAILURE_TOTAL
 from src.queue_interface import TaskQueueInterface
 
 logger = logging.getLogger(__name__)
@@ -235,8 +235,13 @@ class TaskQueue(TaskQueueInterface):
             try:
                 result = await execute(task)
                 await self.save_result(task.task_id, result)
+                if TASK_SUCCESS_TOTAL:
+                    TASK_SUCCESS_TOTAL.labels(type=task.type).inc()
                 logger.info("Task %s completed", task.task_id)
             except Exception as e:
+                if TASK_FAILURE_TOTAL:
+                    category = categorize_error(e)
+                    TASK_FAILURE_TOTAL.labels(type=task.type, error_category=category).inc()
                 await self.fail(task, e)
             finally:
                 async with self._in_flight_lock:
