@@ -1,10 +1,11 @@
 """Property-based тесты с Hypothesis для логики приоритетов и идемпотентности."""
 
-from hypothesis import given, strategies as st, settings as hypothesis_settings, HealthCheck
-import pytest
+from hypothesis import HealthCheck, given
+from hypothesis import settings as hypothesis_settings
+from hypothesis import strategies as st
 
-from src.queue import Task, TaskQueue, MAX_RETRIES, categorize_error
 from src.config import settings as app_settings
+from src.queue import MAX_RETRIES, Task, TaskQueue, categorize_error
 
 
 # Стратегии для генерации тестовых данных
@@ -75,7 +76,6 @@ def test_idempotency_key_uniqueness(task_id, input_text, retries1, retries2):
 @given(error_message=st.text(min_size=1, max_size=100))
 def test_categorize_error_deterministic(error_message: str):
     """Свойство: категоризация ошибки детерминирована."""
-    from src.queue import categorize_error
     result1 = categorize_error(Exception(error_message))
     result2 = categorize_error(Exception(error_message))
     assert result1 == result2
@@ -89,6 +89,7 @@ def test_categorize_error_deterministic(error_message: str):
 def test_fail_transition_deterministic(error_message: str, retries: int):
     """Свойство: результат fail() детерминирован для одинаковых входов."""
     import asyncio
+
     from fakeredis.aioredis import FakeRedis
 
     async def run_test():
@@ -101,6 +102,7 @@ def test_fail_transition_deterministic(error_message: str, retries: int):
         # Мокаем backoff, чтобы не ждать
         async def fake_backoff(retries_param):
             return 0.01
+
         q._backoff_delay = fake_backoff
 
         await q.fail(task, Exception(error_message))
@@ -129,9 +131,12 @@ def test_fail_transition_deterministic(error_message: str, retries: int):
 def test_priority_ordering_property(priority1: str, priority2: str):
     """Свойство: приоритеты сортируются в правильном порядке."""
     priority_order = {"high": 0, "med": 1, "low": 2}
-    assert priority_order[priority1] <= priority_order[priority2] or \
-           priority_order[priority2] <= priority_order[priority1]
+    assert (
+        priority_order[priority1] <= priority_order[priority2] or priority_order[priority2] <= priority_order[priority1]
+    )
     # Транзитивность: если p1 <= p2 и p2 <= p1, то p1 == p2
-    if priority_order[priority1] <= priority_order[priority2] and \
-       priority_order[priority2] <= priority_order[priority1]:
+    if (
+        priority_order[priority1] <= priority_order[priority2]
+        and priority_order[priority2] <= priority_order[priority1]
+    ):
         assert priority1 == priority2

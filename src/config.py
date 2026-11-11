@@ -1,14 +1,21 @@
+import logging
 import sys
-from pydantic_settings import BaseSettings
+from typing import Self
+
 from pydantic import model_validator
-from typing import List, Self
+from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 # Проверка версии Python при старте
 MIN_PYTHON_VERSION = (3, 12)
 if sys.version_info < MIN_PYTHON_VERSION:
-    print(f"Ошибка: требуется Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}+, "
-          f"установлен {sys.version_info[0]}.{sys.version_info[1]}", file=sys.stderr)
+    print(
+        f"Ошибка: требуется Python {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}+, "
+        f"установлен {sys.version_info[0]}.{sys.version_info[1]}",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -41,13 +48,21 @@ class Settings(BaseSettings):
     BROWSER_HEADLESS: bool = False
     BROWSER_VIEWPORT_WIDTH: int = 1280
     BROWSER_VIEWPORT_HEIGHT: int = 800
+    # Прокси для браузера (если маркетплейс недоступен с VPS напрямую):
+    # http://user:pass@host:port или socks5://host:port. Пусто — без прокси.
+    BROWSER_PROXY: str = ""
 
     EVIDENCE_DIR: str = "./evidence"
 
     LOG_LEVEL: str = "INFO"
     METRICS_PORT: int = 9090
+    # В контейнере слушаем все интерфейсы; снаружи порт публикуется явно.
+    METRICS_HOST: str = "0.0.0.0"  # noqa: S104 — слушаем внутри контейнера, порт публикуется явно
 
     MAX_HOURS_PER_CLIENT_PER_MONTH: int = 60
+
+    # Сколько секунд ждать ручной вход по QR, прежде чем сказать «не вошли»
+    QR_LOGIN_TIMEOUT_SECONDS: int = 600
 
     model_config = {
         "env_file": ".env",
@@ -65,10 +80,15 @@ class Settings(BaseSettings):
             raise ValueError("DB_PASSWORD обязателен для запуска")
         if not self.REDIS_PASSWORD:
             raise ValueError("REDIS_PASSWORD обязателен для запуска")
+        if not self.LLM_API_KEY:
+            logger.warning(
+                "LLM_API_KEY не задан. Автономный агент не будет работать. "
+                "Установите LLM_API_KEY в .env для включения автономного режима."
+            )
         return self
 
 
 settings = Settings()
 
 # Приоритеты в порядке обслуживания BLPOP (первый непустой выигрывает)
-PRIORITY_QUEUES: List[str] = [settings.QUEUE_HIGH, settings.QUEUE_MED, settings.QUEUE_LOW]
+PRIORITY_QUEUES: list[str] = [settings.QUEUE_HIGH, settings.QUEUE_MED, settings.QUEUE_LOW]

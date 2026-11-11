@@ -1,15 +1,16 @@
 """Профилирование CPU для критических путей MVP."""
 
 import cProfile
-import pstats
 import io
-import sys
 import os
+import pstats
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fakeredis.aioredis import FakeRedis
-from src.queue import TaskQueue, Task
+
+from src.queue import Task, TaskQueue
 
 
 def profile_queue_enqueue_pop(n: int = 5000):
@@ -18,10 +19,7 @@ def profile_queue_enqueue_pop(n: int = 5000):
     q = TaskQueue(redis_url="redis://localhost")
     q._redis = r
 
-    tasks = [
-        Task(task_id=f"bench-{i}", input=f"benchmark task {i}", priority="med")
-        for i in range(n)
-    ]
+    tasks = [Task(task_id=f"bench-{i}", input=f"benchmark task {i}", priority="med") for i in range(n)]
 
     # Профилируем enqueue
     profiler = cProfile.Profile()
@@ -53,6 +51,7 @@ def profile_queue_enqueue_pop(n: int = 5000):
 def profile_outbox_emit(n: int = 5000):
     """Профилирование outbox.emit n событий."""
     import asyncio
+
     from src.outbox import Outbox, OutboxEvent
 
     class FakePool:
@@ -72,6 +71,7 @@ def profile_outbox_emit(n: int = 5000):
             class Row:
                 def __getitem__(self, key):
                     return 1
+
             return Row()
 
         async def fetch(self, *args, **kwargs):
@@ -103,6 +103,7 @@ def profile_outbox_emit(n: int = 5000):
 
 if __name__ == "__main__":
     import asyncio
+
     print("=" * 60)
     print("Профилирование очереди задач")
     print("=" * 60)

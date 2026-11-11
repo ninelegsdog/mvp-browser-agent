@@ -1,13 +1,30 @@
 [tool.ruff]
 line-length = 120
+exclude = ["__pycache__", ".pytest_cache", "evidence", "browser-profile", "build", "dist"]
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "Q", "S", "UP", "B", "C4", "PL", "PERF", "RET", "SIM", "TID", "TRY"]
 fixable = ["E", "F", "I", "N", "Q", "S", "UP", "B", "C4", "PL", "PERF", "RET", "SIM", "TID", "TRY"]
 unfixable = ["S108", "S307"]
-exclude = ["__pycache__", ".pytest_cache", "evidence", "browser-profile", "build", "dist"]
+ignore = [
+    "TRY003",  # сообщения об ошибках на русском пишем прямо в raise — так читаемее
+    "TRY300",  # try/else в async-коде ухудшает читаемость
+    "PLC0415", # локальные импорты опциональных зависимостей (prometheus, asyncpg)
+    "PLR2004", # сравнение с явными порогами (0.90, 5000) нагляднее константы
+    "PLR0913", # у инструментов и HTTP-хендлеров осознанно много параметров
+    "PLR0917",
+]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["src"]
-profile = "black"
+
+[tool.ruff.lint.per-file-ignores]
+# Тесты: assert — штатный механизм pytest; S101 включён для боевого кода.
+"tests/**" = ["S101", "S108", "PLR2004", "PLC0415", "TRY003", "TRY300", "PLR0913", "PLR0917", "B017", "S110"]
+"scripts/**" = ["S101", "PLC0415", "TRY003", "PLR2004"]
+"demo.py" = ["S101", "PLC0415", "T201"]
+# Имя таблицы — модульная константа, все значения передаются параметрами $1..$n.
+"src/outbox.py" = ["S608"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from src.outbox import Outbox, OutboxEvent, OutboxDispatcher, LoggingPublisher
+from src.outbox import LoggingPublisher, OutboxDispatcher, OutboxEvent
 
 
 def test_outbox_mark_processed_sets_timestamp():
@@ -40,7 +40,7 @@ def test_outbox_event_immutable():
     )
     try:
         event.id = 999
-        assert False, "Should be frozen"
+        raise AssertionError("Should be frozen")
     except dataclasses.FrozenInstanceError:
         pass  # ожидается
 

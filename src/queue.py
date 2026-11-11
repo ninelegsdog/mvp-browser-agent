@@ -15,17 +15,16 @@ import logging
 import random
 import signal
 import uuid
-from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import redis.asyncio as redis
 
-from src.config import settings, PRIORITY_QUEUES
-from src.security import assert_no_secrets_in_text
 from src.agent import agent as agent_instance
-from src.metrics import RETRY_COUNT, TASK_SUCCESS_TOTAL, TASK_FAILURE_TOTAL
-from src.queue_interface import TaskQueueInterface
+from src.config import PRIORITY_QUEUES, settings
+from src.metrics import RETRY_COUNT, TASK_FAILURE_TOTAL, TASK_SUCCESS_TOTAL
+from src.queue_interface import Task, TaskQueueInterface  # Task — единый источник истины
+from src.security import assert_no_secrets_in_text
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ BRPOP_TIMEOUT = 30
 TASK_TTL_SECONDS = 86400  # 24 часа
 
 # Экспоненциальный бэк офф с jitter
-BACKOFF_BASE_SECONDS = 5   # базовая задержка перед первым повтором
+BACKOFF_BASE_SECONDS = 5  # базовая задержка перед первым повтором
 BACKOFF_MAX_SECONDS = 300  # maximale задержка 5 минут
 BACKOFF_JITTER_SECONDS = 10  # диапазон джиттера
 
@@ -56,62 +55,15 @@ def categorize_error(error: Exception) -> str:
         return ERROR_CATEGORY_NETWORK
     return ERROR_CATEGORY_OTHER
 
+
 RESULTS_KEY = "results"
 IDEMPOTENCY_KEYS_SET = "idempotency_keys"
 
 
-@dataclass
-class Task:
-    task_id: str
-    input: str
-    created_at: str = ""
-    retries: int = 0
-    priority: str = "med"
-    type: str = "echo"
-    command: Optional[str] = None
-    path: Optional[str] = None
-    idempotency_key: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        d = {
-            "task_id": self.task_id,
-            "input": self.input,
-            "created_at": self.created_at,
-            "retries": self.retries,
-            "priority": self.priority,
-            "type": self.type,
-        }
-        if self.command:
-            d["command"] = self.command
-        if self.path:
-            d["path"] = self.path
-        if self.idempotency_key:
-            d["idempotency_key"] = self.idempotency_key
-        d.update(self.extra)
-        return d
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "Task":
-        return cls(
-            task_id=d["task_id"],
-            input=d["input"],
-            created_at=d.get("created_at", ""),
-            retries=d.get("retries", 0),
-            priority=d.get("priority", "med"),
-            type=d.get("type", "echo"),
-            command=d.get("command"),
-            path=d.get("path"),
-            idempotency_key=d.get("idempotency_key"),
-            extra={k: v for k, v in d.items() if k not in
-                   {"task_id", "input", "created_at", "retries", "priority", "type", "command", "path", "idempotency_key"}},
-        )
-
-
 class TaskQueue(TaskQueueInterface):
-    def __init__(self, redis_url: str = None):
+    def __init__(self, redis_url: str | None = None):
         self.redis_url = redis_url or settings.REDIS_URL
-        self._redis = None
+        self._redis: Any = None
         self._shutdown = False
         self._in_flight: set = set()
         self._in_flight_lock = asyncio.Lock()
@@ -137,7 +89,7 @@ class TaskQueue(TaskQueueInterface):
         дублируется, возвращается существующий task_id.
         """
         if not task.created_at:
-            task.created_at = datetime.now(timezone.utc).isoformat()
+            task.created_at = datetime.now(UTC).isoformat()
 
         if task.idempotency_key:
             already = await self._redis.sismember(IDEMPOTENCY_KEYS_SET, task.idempotency_key)
@@ -161,7 +113,7 @@ class TaskQueue(TaskQueueInterface):
         }
         return mapping.get(priority, settings.QUEUE_MED)
 
-    async def pop(self) -> Optional[Task]:
+    async def pop(self) -> Task | None:
         """BLPOP по упорядоченным очередям (high > med > low).
 
         Пропускает просроченные задачи (старше TASK_TTL_SECONDS).
@@ -180,25 +132,26 @@ class TaskQueue(TaskQueueInterface):
             task = Task.from_dict(data)
             if task.created_at:
                 created = datetime.fromisoformat(task.created_at)
-                age = (datetime.now(timezone.utc) - created).total_seconds()
+                age = (datetime.now(UTC) - created).total_seconds()
                 if age > TASK_TTL_SECONDS:
-                    logger.warning("Task %s expired (age %.0fs > TTL %ds), skipping",
-                                   task.task_id, age, TASK_TTL_SECONDS)
+                    logger.warning(
+                        "Task %s expired (age %.0fs > TTL %ds), skipping", task.task_id, age, TASK_TTL_SECONDS
+                    )
                     continue
             return task
 
-    async def save_result(self, task_id: str, result: Dict[str, Any]) -> None:
+    async def save_result(self, task_id: str, result: dict[str, Any]) -> None:
         assert_no_secrets_in_text(json.dumps(result), "task.save_result")
         await self._redis.hset(RESULTS_KEY, task_id, json.dumps(result, ensure_ascii=False))
 
-    async def get_result(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_result(self, task_id: str) -> dict[str, Any] | None:
         data = await self._redis.hget(RESULTS_KEY, task_id)
         return json.loads(data) if data else None
 
     async def _backoff_delay(self, retries: int) -> float:
         """Экспоненциальный бэк офф с jitter."""
-        delay = min(BACKOFF_BASE_SECONDS * (2 ** retries), BACKOFF_MAX_SECONDS)
-        jitter = random.uniform(0, BACKOFF_JITTER_SECONDS)
+        delay = min(BACKOFF_BASE_SECONDS * (2**retries), BACKOFF_MAX_SECONDS)
+        jitter = random.uniform(0, BACKOFF_JITTER_SECONDS)  # noqa: S311 — jitter задержки, не криптография
         return delay + jitter
 
     async def fail(self, task: Task, error: Exception) -> None:
@@ -212,7 +165,11 @@ class TaskQueue(TaskQueueInterface):
             assert_no_secrets_in_text(str(error), "queue.fail")
             logger.warning(
                 "Task %s failed (retry %d/%d, retry in %.1fs): %s",
-                task.task_id, task.retries, MAX_RETRIES, delay, error
+                task.task_id,
+                task.retries,
+                MAX_RETRIES,
+                delay,
+                error,
             )
         else:
             category = categorize_error(error)
@@ -274,7 +231,8 @@ class TaskQueue(TaskQueueInterface):
 # Заглушка execute: подменяется реальной логикой агента (src/agent.py)
 # ---------------------------------------------------------------------------
 
-async def execute(task: Task) -> Dict[str, Any]:
+
+async def execute(task: Task) -> dict[str, Any]:
     """Выполнить задачу через агента.
 
     Делегирует в agent.execute_task, который создаёт задачу в агенте,
@@ -286,6 +244,7 @@ async def execute(task: Task) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 async def cli_add(task_text: str, priority: str = "med") -> None:
     q = TaskQueue()

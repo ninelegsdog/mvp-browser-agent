@@ -5,30 +5,45 @@
 """
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+_KNOWN_TASK_FIELDS = frozenset(
+    {
+        "task_id",
+        "input",
+        "created_at",
+        "retries",
+        "priority",
+        "type",
+        "command",
+        "path",
+        "idempotency_key",
+    }
+)
 
 
 @dataclass
 class Task:
     """Единица работы в очереди."""
+
     task_id: str
     input: str
     created_at: str = ""
     retries: int = 0
     priority: str = "med"
     type: str = "echo"
-    command: Optional[str] = None
-    path: Optional[str] = None
-    idempotency_key: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    command: str | None = None
+    path: str | None = None
+    idempotency_key: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = {
             "task_id": self.task_id,
             "input": self.input,
@@ -47,7 +62,7 @@ class Task:
         return d
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "Task":
+    def from_dict(cls, d: dict[str, Any]) -> "Task":
         return cls(
             task_id=d["task_id"],
             input=d["input"],
@@ -58,8 +73,7 @@ class Task:
             command=d.get("command"),
             path=d.get("path"),
             idempotency_key=d.get("idempotency_key"),
-            extra={k: v for k, v in d.items() if k not in
-                   {"task_id", "input", "created_at", "retries", "priority", "type", "command", "path", "idempotency_key"}},
+            extra={k: v for k, v in d.items() if k not in _KNOWN_TASK_FIELDS},
         )
 
 
@@ -79,14 +93,14 @@ class TaskQueueInterface:
         """Добавить задачу в очередь. Возвращает task_id."""
         raise NotImplementedError
 
-    async def pop(self) -> Optional[Task]:
+    async def pop(self) -> Task | None:
         """Извлечь задачу из очереди. Блокирующая операция с таймаутом."""
         raise NotImplementedError
 
-    async def save_result(self, task_id: str, result: Dict[str, Any]) -> None:
+    async def save_result(self, task_id: str, result: dict[str, Any]) -> None:
         raise NotImplementedError
 
-    async def get_result(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_result(self, task_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
     async def fail(self, task: Task, error: Exception) -> None:
@@ -106,13 +120,13 @@ class InMemoryTaskQueue(TaskQueueInterface):
     """Реализация очереди в памяти для тестов и разработки."""
 
     def __init__(self):
-        self._queues: Dict[str, asyncio.Queue] = {
+        self._queues: dict[str, asyncio.Queue] = {
             "high": asyncio.Queue(),
             "med": asyncio.Queue(),
             "low": asyncio.Queue(),
         }
-        self._results: Dict[str, Dict[str, Any]] = {}
-        self._dlq: List[Dict[str, Any]] = []
+        self._results: dict[str, dict[str, Any]] = {}
+        self._dlq: list[dict[str, Any]] = []
         self._shutdown = False
 
     async def connect(self) -> None:
@@ -123,13 +137,13 @@ class InMemoryTaskQueue(TaskQueueInterface):
 
     async def enqueue(self, task: Task) -> str:
         if not task.created_at:
-            task.created_at = datetime.now(timezone.utc).isoformat()
+            task.created_at = datetime.now(UTC).isoformat()
         queue = self._queues.get(task.priority, self._queues["med"])
         await queue.put(task)
         logger.info("Enqueued task %s to %s", task.task_id, task.priority)
         return task.task_id
 
-    async def pop(self) -> Optional[Task]:
+    async def pop(self) -> Task | None:
         for queue_name in ["high", "med", "low"]:
             queue = self._queues[queue_name]
             try:
@@ -138,10 +152,10 @@ class InMemoryTaskQueue(TaskQueueInterface):
                 continue
         return None
 
-    async def save_result(self, task_id: str, result: Dict[str, Any]) -> None:
+    async def save_result(self, task_id: str, result: dict[str, Any]) -> None:
         self._results[task_id] = result
 
-    async def get_result(self, task_id: str) -> Optional[Dict[str, Any]]:
+    async def get_result(self, task_id: str) -> dict[str, Any] | None:
         return self._results.get(task_id)
 
     async def fail(self, task: Task, error: Exception) -> None:

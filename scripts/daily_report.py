@@ -6,20 +6,21 @@
 
 import asyncio
 import json
-import sys
 import os
-from datetime import datetime, timezone
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.config import settings
-from src.metrics import get_success_rate, get_slo_status, get_memory_usage
+from src.metrics import get_memory_usage, get_success_rate
 
 
 async def get_queue_stats():
     """Получить статистику очереди."""
     from src.queue import TaskQueue
+
     q = TaskQueue()
     await q.connect()
 
@@ -35,7 +36,7 @@ async def get_queue_stats():
 async def generate_daily_report():
     """Генерация ежедневного отчёта о состоянии системы."""
     report = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "system": "MVP Browser Agent",
         "version": "0.1.0",
     }

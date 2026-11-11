@@ -10,8 +10,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 try:
-    from testcontainers.redis import RedisContainer
     from testcontainers.postgres import PostgresContainer
+    from testcontainers.redis import RedisContainer
+
     HAS_TESTCONTAINERS = True
 except ImportError:
     HAS_TESTCONTAINERS = False
@@ -19,11 +20,9 @@ except ImportError:
 
 if HAS_TESTCONTAINERS:
     import asyncpg
-    import redis.asyncio as redis
 
-    from src.queue import TaskQueue, Task, MAX_RETRIES
-    from src.outbox import Outbox, OutboxDispatcher, LoggingPublisher
-
+    from src.outbox import Outbox
+    from src.queue import Task, TaskQueue
 
     async def test_queue_with_real_redis():
         """Интеграционный тест очереди с реальным Redis."""
@@ -38,7 +37,6 @@ if HAS_TESTCONTAINERS:
             assert popped is not None
             assert popped.task_id == "integration-1"
             await q.close()
-
 
     async def test_outbox_with_real_postgres():
         """Интеграционный тест outbox с реальным PostgreSQL."""
@@ -68,7 +66,7 @@ if HAS_TESTCONTAINERS:
                 migration_path = os.path.join(
                     os.path.dirname(os.path.dirname(__file__)), "migrations", "001_outbox.sql"
                 )
-                with open(migration_path, "r") as f:
+                with open(migration_path) as f:
                     migration_sql = f.read()
                 await conn.execute(migration_sql)
 
@@ -86,12 +84,10 @@ if HAS_TESTCONTAINERS:
             finally:
                 await conn.close()
 
-
     async def main():
         await test_queue_with_real_redis()
         await test_outbox_with_real_postgres()
         print("Все интеграционные тесты пройдены")
-
 
     if __name__ == "__main__":
         asyncio.run(main())

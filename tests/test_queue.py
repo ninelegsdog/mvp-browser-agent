@@ -5,9 +5,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from datetime import UTC
+
 from fakeredis.aioredis import FakeRedis
+
 from src.config import settings
-from src.queue import TaskQueue, Task, MAX_RETRIES
+from src.queue import MAX_RETRIES, Task, TaskQueue
 
 
 async def test_enqueue_pop_basic():
@@ -60,12 +63,10 @@ async def test_retry_then_dlq():
     # Мокаем _backoff_delay, чтобы не ждать реальную задержку
     async def fake_backoff(retries):
         return 0.01
+
     q._backoff_delay = fake_backoff
 
-    try:
-        await q.fail(task, Exception("test"))
-    except Exception:
-        pass
+    await q.fail(task, Exception("test"))
 
     dlq_len = await r.llen(settings.DLQ)
     assert dlq_len == 1, f"Expected 1 in DLQ, got {dlq_len}"
@@ -82,10 +83,7 @@ async def test_retry_preserves_queue():
 
     task = Task(task_id="retry", input="retry me", priority="high", retries=0)
 
-    try:
-        await q.fail(task, Exception("retry"))
-    except Exception:
-        pass
+    await q.fail(task, Exception("retry"))
 
     high_len = await r.llen(settings.QUEUE_HIGH)
     med_len = await r.llen(settings.QUEUE_MED)
@@ -139,8 +137,9 @@ async def test_task_ttl_expired_skipped():
     q._redis = r
 
     # Создаём задачу с.created_at в прошлом (старше TTL)
-    from datetime import datetime, timezone, timedelta
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    from datetime import datetime, timedelta
+
+    old_time = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
     expired_task = Task(task_id="expired", input="old", priority="med", created_at=old_time)
     fresh_task = Task(task_id="fresh", input="new", priority="med")
 
@@ -161,11 +160,11 @@ async def test_task_ttl_expired_skipped():
 async def test_categorize_error():
     """Категоризация ошибок в DLQ."""
     from src.queue import (
-        categorize_error,
-        ERROR_CATEGORY_CAPTCHA,
         ERROR_CATEGORY_BAN,
+        ERROR_CATEGORY_CAPTCHA,
         ERROR_CATEGORY_NETWORK,
         ERROR_CATEGORY_OTHER,
+        categorize_error,
     )
 
     assert categorize_error(Exception("captcha required")) == ERROR_CATEGORY_CAPTCHA
@@ -188,6 +187,7 @@ async def test_dlq_error_category():
     # Мокаем _backoff_delay, чтобы не ждать реальную задержку
     async def fake_backoff(retries):
         return 0.01
+
     q._backoff_delay = fake_backoff
 
     await q.fail(task, Exception("captcha required"))

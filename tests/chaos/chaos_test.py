@@ -12,17 +12,14 @@ import asyncio
 import json
 import logging
 import os
-import signal
-import subprocess
 import sys
-import time
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fakeredis.aioredis import FakeRedis
+
 from src.config import settings
-from src.queue import TaskQueue, Task, MAX_RETRIES
+from src.queue import MAX_RETRIES, Task, TaskQueue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -103,6 +100,7 @@ class ChaosTester:
         # Искусственно ускоряем ретраи
         async def fake_backoff(retries):
             return 0.01
+
         q._backoff_delay = fake_backoff
 
         for i in range(MAX_RETRIES + 1):
@@ -171,16 +169,16 @@ class ChaosTester:
         for test in tests:
             try:
                 await test()
-            except Exception as e:
-                logger.error(f"Тест {test.__name__} упал: {e}")
+            except Exception:
+                logger.exception("Тест %s упал", test.__name__)
                 self.results.append((test.__name__, "FAIL"))
 
         # Итоговый отчет
         passed = sum(1 for _, status in self.results if status == "PASS")
         failed = sum(1 for _, status in self.results if status == "FAIL")
-        logger.info(f"\n{'='*50}")
+        logger.info(f"\n{'=' * 50}")
         logger.info(f"Chaos testing results: {passed} passed, {failed} failed")
-        logger.info(f"{'='*50}")
+        logger.info(f"{'=' * 50}")
 
         return failed == 0
 

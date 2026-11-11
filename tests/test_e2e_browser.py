@@ -4,12 +4,10 @@
 Запускаются с браузером Chromium в headless режиме.
 """
 
-import asyncio
 import os
 import sys
 
 import pytest
-from playwright.async_api import async_playwright
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -28,7 +26,7 @@ async def browser_session():
 @pytest.mark.asyncio
 async def test_browser_start_and_close(browser_session):
     """Тест запуска и остановки браузера."""
-    assert browser_session._browser is not None
+    assert browser_session.is_started is True
     assert browser_session._context is not None
     assert browser_session._page is not None
 

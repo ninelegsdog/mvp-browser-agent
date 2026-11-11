@@ -9,7 +9,7 @@ try:
 except ImportError:
     asyncpg = None
 
-from src.outbox import Outbox, OutboxEvent, OutboxDispatcher, LoggingPublisher
+from src.outbox import LoggingPublisher, Outbox, OutboxDispatcher
 
 
 async def test_outbox_real_db():
@@ -21,7 +21,7 @@ async def test_outbox_real_db():
     try:
         conn = await asyncpg.connect(
             host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", 5432)),
+            port=int(os.getenv("DB_PORT", "5432")),
             user=os.getenv("DB_USER", "postgres"),
             password=os.getenv("DB_PASSWORD", "postgres"),
             database=os.getenv("DB_NAME", "mvp_agent"),
@@ -32,10 +32,8 @@ async def test_outbox_real_db():
 
     try:
         # Применяем миграцию
-        migration_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "migrations", "001_outbox.sql"
-        )
-        with open(migration_path, "r") as f:
+        migration_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "migrations", "001_outbox.sql")
+        with open(migration_path) as f:
             migration_sql = f.read()
         await conn.execute(migration_sql)
 

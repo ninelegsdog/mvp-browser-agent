@@ -11,7 +11,7 @@
 [![aiogram 3.4](https://img.shields.io/badge/aiogram-3.4-blue)](https://docs.aiogram.dev/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue)](https://www.docker.com/)
 [![CI](https://github.com/ninelegsdog/mvp-browser-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ninelegsdog/mvp-browser-agent/actions/workflows/ci.yml)
-[![Version: v0.1.0](https://img.shields.io/badge/version-v0.1.0-blue)](https://github.com/ninelegsdog/mvp-browser-agent/releases/tag/v0.1.0)
+[![Version: v0.3.0](https://img.shields.io/badge/version-v0.3.0-blue)](https://github.com/ninelegsdog/mvp-browser-agent/releases/tag/v0.3.0)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -39,6 +39,7 @@
 - ✅ Отвечает в **Telegram** — привычном интерфейсе
 - ✅ Показывает **доказательство каждого действия** (скриншот, видео, trace)
 - ✅ Требует **подтверждения перед любым необратимым действием** (оплата, оформление заказа)
+- ✅ **Сам выбирает действие в браузере** и меняет план после обычного уточнения в чате
 
 ---
 
@@ -49,7 +50,7 @@
 | Где живёт система | На вашем VPS — полный контроль над данными |
 | Где хранятся сессии | В профиле Chromium с правами `0700`, вне git |
 | Как входит в кабинеты | Один раз сканируете QR с телефона — дальше сессия жива |
-| Что делает агент | Выполняет поручения через инструменты (shell/HTTP/файлы/память), браузер — по сценарию |
+| Что делает агент | Цикл «мысль → действие → результат»: модель выбирает инструмент (браузер, shell из белого списка, HTTP, файлы, память) и пересматривает план после вашего уточнения |
 | Как подтвердить результат | Каждый шаг фиксируется: скриншот, видео, единая схема дефекта при сбое |
 | Что если что-то сломается | Алерт в Telegram в момент сбоя, не через неделю |
 | Кто управляет доступом | Только вы — через `BOT_ADMIN_ID` в боте |
@@ -63,8 +64,8 @@ graph TD
     Client[Заказчик в Telegram] -->|Текст / Голос| Bot[aiogram Бот]
     Bot -->|Создание задачи| Queue[(Redis Очередь)]
     Queue -->|high / med / low| Worker[Воркер задач]
-    Worker -->|Инструменты| Agent[Агент-цикл]
-    Agent -->|браузер по сценарию| Browser[Playwright Chromium]
+    Worker -->|Задача| Agent[ReAct-цикл + LLM-планировщик]
+    Agent -->|навигация / клик / ввод / извлечение| Browser[Playwright Chromium]
     Browser -->|QR вход| Sites[Ozon / Avito / WB / Почта]
     Browser -->|доказательство| Evidence[(Evidence хранилище)]
     Worker -->|события| Outbox[(PostgreSQL Outbox)]
@@ -84,20 +85,33 @@ cd mvp-browser-agent
 
 # 2. Настроить переменные окружения
 cp .env.example .env
-nano .env   # укажите BOT_TOKEN, BOT_ADMIN_ID, пароли БД и Redis
+nano .env   # BOT_TOKEN, BOT_ADMIN_ID, LLM_API_KEY, пароли БД и Redis
 
-# 3. Запустить инфраструктуру
+# 3. Проверить, что все данные на месте (до первого запуска)
+python scripts/preflight.py
+# [OK] BOT_TOKEN / BOT_ADMIN_ID / LLM_API_KEY / Chromium ...
+# ИТОГ: обязательные данные на месте. Можно запускать.
+
+# 4. Войти по QR в кабинет (один раз, руками, с телефона)
+python scripts/qr_login.py --url https://www.ozon.ru \
+    --success-selector "<селектор кабинета>" --show
+# ИТОГ: вход подтверждён (код 0)
+
+# 5. Запустить инфраструктуру
 docker compose -f docker-compose.prod.yml up -d
 
-# 4. Проверить здоровье сервисов
+# 6. Проверить здоровье и сеть
+python scripts/preflight.py --network
 curl -s http://localhost:9090/health | python3 -m json.tool
 
-# 5. Запустить бота и воркера
+# 7. Запустить бота и воркера
 python -m src.telegram_bot &
 python -m src.queue worker &
 ```
 
 > **Важно:** без заполненного `.env` бот не запустится. Все секреты хранятся только локально и не попадают в git.
+>
+> Полный список данных, которые нужны от заказчика, — [`docs/CLIENT-START.md`](docs/CLIENT-START.md).
 
 ---
 
@@ -122,16 +136,20 @@ mvp-browser-agent/
 │   ├── config.py          # Pydantic настройки
 │   ├── security.py        # Защита от утечек секретов
 │   ├── queue.py           # Очередь: приоритеты, DLQ, idempotency
-│   ├── agent.py           # Агент-цикл, FSM состояния
+│   ├── agent.py           # ReAct-цикл, FSM состояния, resume()
+│   ├── autonomous_planner.py # LLM выбирает действие, разбор JSON
+│   ├── browser_tool.py    # Действия в браузере: navigate/click/fill/extract
 │   ├── browser.py         # Playwright, QR-вход, видео
 │   ├── proof.py           # Доказательство: defect.v1, read-only
 │   ├── outbox.py          # Транзакционный outbox
 │   ├── metrics.py         # Prometheus, health check
 │   ├── telegram_bot.py    # aiogram бот, админ whitelist
 │   └── pages/             # Page Object Model (Ozon и др.)
-├── tests/                 # 30 юнит-тестов, покрытие 45%+
+├── scripts/               # preflight.py, qr_login.py, daily_report.py
+├── tests/                 # 109 тестов: юнит, контрактные, интеграционные
 ├── migrations/            # SQL-миграции (outbox)
 ├── docs/                  # Полная документация
+│   ├── CLIENT-START.md    # Что нужно от заказчика для старта
 │   ├── ARCHITECTURE.md    # Диаграммы и описание компонентов
 │   ├── DEPLOYMENT.md      # Инструкция развёртывания (6 шагов)
 │   ├── API.md             # HTTP API и CLI
@@ -150,6 +168,7 @@ mvp-browser-agent/
 
 | Раздел | Файл | Содержание |
 |--------|------|-----------|
+| Старт проекта | [`docs/CLIENT-START.md`](docs/CLIENT-START.md) | Что нужно от заказчика: каждый пункт с проверкой |
 | Архитектура | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Mermaid-диаграммы, модель безопасности, стек технологий |
 | Развёртывание | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Пошаговая инструкция для VPS заказчика (6 шагов) |
 | API и интеграция | [`docs/API.md`](docs/API.md) | HTTP API (`/health`, `/metrics`), CLI очереди, JSON-схемы |
@@ -182,9 +201,10 @@ mvp-browser-agent/
 
 | Версия | Статус | Основное |
 |--------|--------|----------|
-| **0.1.0** | ✅ Готово | MVP: очередь, агент, браузер, outbox, доказательства, бот, мониторинг |
-| 0.2.0 | 📋 План | Page Object Model для Авито/WB, лимиты антибота, покрытие тестами 80% |
-| 0.3.0 | 📋 План | Множественные аккаунты, планировщик задач, веб-интерфейс DLQ |
+| 0.1.0 | ✅ Готово | MVP: очередь, агент, браузер, outbox, доказательства, бот, мониторинг |
+| 0.2.0 | ✅ Готово | Реальный браузерный инструмент, не-headless запуск, шифрование профиля |
+| **0.3.0** | ✅ Готово | ReAct-цикл с выбором действий моделью, подтверждение необратимых шагов, `preflight.py`, `qr_login.py`, `CLIENT-START.md` |
+| 0.4.0 | 📋 План | Page Object Model для Авито/WB, лимиты антибота, покрытие тестами 80% |
 | 1.0.0 | 📋 План | SLA 99.9%, автоматический rollback, полная документация 152-ФЗ |
 
 ---

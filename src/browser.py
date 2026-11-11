@@ -1,7 +1,6 @@
 """Браузер с сохранённой сессией: Playwright + постоянный профиль Chromium.
 
-Паттерн kwork-packs/tg-web.mjs:
-- launchPersistentContext с профилем на диске (сессия живёт между запусками).
+- launch_persistent_context с профилем на диске (сессия живёт между запусками).
 - Вход по QR в реальный веб-интерфейс (Telegram Web, маркетплейсы, почта).
 - Проверка «сессия жива» перед каждым поручением.
 - Профиль 0700, вне git, отдельные профили по аккаунтам.
@@ -13,13 +12,13 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Literal
 
-from playwright.async_api import async_playwright, BrowserContext, Page
+from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
+from src.browser_encryption import decrypt_directory_contents, encrypt_directory_contents, is_encrypted
 from src.config import settings
-from src.browser_encryption import encrypt_directory_contents, decrypt_directory_contents, is_encrypted
-from src.security import check_profile_permissions, assert_no_secrets_in_text
+from src.security import assert_no_secrets_in_text, check_profile_permissions
 
 TARGET_SITES = ["https://www.ozon.ru", "https://www.avito.ru", "https://www.wildberries.ru"]
 
@@ -31,11 +30,12 @@ class BrowserSession:
 
     def __init__(
         self,
-        profile_dir: str = None,
-        headless: bool = None,
-        viewport_width: int = None,
-        viewport_height: int = None,
-        record_video_dir: str = None,
+        profile_dir: str | None = None,
+        headless: bool | None = None,
+        viewport_width: int | None = None,
+        viewport_height: int | None = None,
+        record_video_dir: str | None = None,
+        proxy: str | None = None,
         navigation_timeout_ms: int = 30000,
         action_timeout_ms: int = 10000,
     ):
@@ -46,13 +46,30 @@ class BrowserSession:
             "height": viewport_height or settings.BROWSER_VIEWPORT_HEIGHT,
         }
         self.record_video_dir = record_video_dir
+        self.proxy = proxy or settings.BROWSER_PROXY
         self.navigation_timeout_ms = navigation_timeout_ms
         self.action_timeout_ms = action_timeout_ms
-        self._playwright = None
-        self._browser = None
-        self._context: Optional[BrowserContext] = None
-        self._page: Optional[Page] = None
-        self._contexts: Dict[str, BrowserContext] = {}
+        self._playwright: Playwright | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._contexts: dict[str, BrowserContext] = {}
+        self._isolated_dirs: dict[str, str] = {}
+
+    def _context_options(self) -> dict:
+        """Параметры запуска постоянного контекста (общие для всех профилей)."""
+        options: dict = {
+            "headless": self.headless,
+            "args": ["--lang=ru-RU", "--no-sandbox", "--disable-setuid-sandbox"],
+            "viewport": self.viewport,
+            "locale": "ru-RU",
+        }
+        if self.proxy:
+            options["proxy"] = {"server": self.proxy}
+        if self.record_video_dir:
+            Path(self.record_video_dir).mkdir(parents=True, exist_ok=True)
+            options["record_video_dir"] = self.record_video_dir
+            options["record_video_size"] = self.viewport
+        return options
 
     async def start(self) -> None:
         Path(self.profile_dir).mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -66,32 +83,24 @@ class BrowserSession:
             decrypt_directory_contents(self.profile_dir)
 
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=self.headless,
-            args=["--lang=ru-RU", "--no-sandbox", "--disable-setuid-sandbox"],
+
+        # Постоянный профиль: куки и сессия (включая вход по QR с телефона)
+        # переживают перезапуск процесса. Именно этот профиль пользователь
+        # логинит вручную через телефон на своём VPS.
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=self.profile_dir,
+            **self._context_options(),
         )
-
-        # Первичный контекст с постоянным профилем
-        context_options = {
-            "viewport": self.viewport,
-            "locale": "ru-RU",
-        }
-        if self.record_video_dir:
-            Path(self.record_video_dir).mkdir(parents=True, exist_ok=True)
-            context_options["record_video_dir"] = self.record_video_dir
-            context_options["record_video_size"] = self.viewport
-
-        self._context = await self._browser.new_context(**context_options)
-        # Применяем постоянный профиль через хранилище состояния
-        if self.profile_dir and Path(self.profile_dir).exists():
-            await self._context.add_init_script(
-                f"localStorage.clear(); sessionStorage.clear();"
-            )
-        pages = self._context.pages if callable(self._context.pages) else self._context.pages
-        pages_list = pages() if callable(pages) else pages
-        self._page = pages_list[0] if pages_list else await self._context.new_page()
-        self._contexts: Dict[str, BrowserContext] = {"default": self._context}
-        logger.info("Browser session started, profile=%s, contexts=%d", self.profile_dir, len(self._contexts))
+        pages = self._context.pages
+        self._page = pages[0] if pages else await self._context.new_page()
+        self._contexts = {"default": self._context}
+        if self._page:
+            await self._setup_dialog_handler(self._page)
+        logger.info(
+            "Браузер запущен с постоянным профилем %s (контекстов: %d)",
+            self.profile_dir,
+            len(self._contexts),
+        )
 
     async def check_session(self, selector: str = ".chatlist, .chat-container", timeout_ms: int = 60000) -> bool:
         """Проверка, что сессия жива (элемент присутствует в DOM)."""
@@ -103,16 +112,18 @@ class BrowserSession:
         except Exception:
             return False
 
-    async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> Page:
+    async def navigate(
+        self, url: str, wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded"
+    ) -> Page:
         """Перейти по URL с таймаутом навигации."""
         if not self._context:
             raise RuntimeError("Browser not started")
         page = await self._context.new_page()
         try:
             await page.goto(url, timeout=self.navigation_timeout_ms, wait_until=wait_until)
-        except Exception as e:
+        except Exception:
             await page.close()
-            raise e
+            raise
         return page
 
     async def health_check_sites(self) -> dict:
@@ -120,7 +131,7 @@ class BrowserSession:
 
         Возвращает dict {url: bool} — доступен ли сайт.
         """
-        results = {}
+        results: dict[str, bool] = {}
         if not self._context:
             return results
         for url in TARGET_SITES:
@@ -133,7 +144,12 @@ class BrowserSession:
                 logger.warning("Site %s unavailable: %s", url, e)
         return results
 
-    async def new_page(self, block_resources: bool = False, auto_dismiss_cookies: bool = True, handle_dialogs: bool = True) -> Page:
+    async def new_page(
+        self,
+        block_resources: bool = False,
+        auto_dismiss_cookies: bool = True,
+        handle_dialogs: bool = True,
+    ) -> Page:
         """Создать новую страницу.
 
         При block_resources=True блокируются картинки/CSS/шрифты.
@@ -154,10 +170,6 @@ class BrowserSession:
     async def block_non_essential_resources(self, page: Page) -> None:
         """Заблокировать несущественные ресурсы на существующей странице."""
         await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,ico}", lambda route: route.abort())
-        if not self._context:
-            raise RuntimeError("Browser not started")
-        page = await self._context.new_page()
-        return page
 
     async def _setup_cookie_banner_handler(self, page: Page) -> None:
         """Автоматически отклонять баннеры куки на известных селекторах."""
@@ -180,14 +192,15 @@ class BrowserSession:
                     if await element.is_visible(timeout=2000):
                         await element.click(timeout=2000)
                         logger.info("Отклонён баннер куки: %s", selector)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Баннер куки не обработан (%s): %s", selector, e)
 
         # Проверяем при загрузке страницы
         page.on("load", lambda _: asyncio.create_task(handle_cookie_banner()))
 
     async def _setup_dialog_handler(self, page: Page) -> None:
         """Автоматически принимать или отклонять диалоги (alert, confirm, prompt)."""
+
         async def handle_dialog(dialog):
             dialog_type = dialog.type
             message = dialog.message[:100] if dialog.message else ""
@@ -200,17 +213,27 @@ class BrowserSession:
     async def create_isolated_context(self, context_id: str = "isolated") -> BrowserContext:
         """Создать изолированный контекст браузера (отдельные куки, хранилище, сессия).
 
-        Полезно для работы с разными аккаунтами одновременно.
+        В режиме постоянного профиля отдельный контекст — это отдельная
+        директория профиля: у каждого аккаунта своя сессия, которая тоже
+        переживает перезапуск.
         """
-        if not self._browser:
+        if not self._playwright:
             raise RuntimeError("Browser not started")
         if context_id in self._contexts:
             raise ValueError(f"Context {context_id} already exists")
-        context = await self._browser.new_context(
-            viewport=self.viewport,
-            locale="ru-RU",
+
+        profile_path = Path(f"{self.profile_dir}-{context_id}")
+        profile_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(profile_path, 0o700)
+        if is_encrypted(str(profile_path)):
+            decrypt_directory_contents(str(profile_path))
+
+        context = await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile_path),
+            **self._context_options(),
         )
         self._contexts[context_id] = context
+        self._isolated_dirs[context_id] = str(profile_path)
         logger.info("Создан изолированный контекст %s (всего %d)", context_id, len(self._contexts))
         return context
 
@@ -228,22 +251,33 @@ class BrowserSession:
         context = self._contexts[context_id]
         await context.close()
         del self._contexts[context_id]
+        isolated = self._isolated_dirs.pop(context_id, None)
+        if isolated and Path(isolated).exists():
+            encrypted_count = encrypt_directory_contents(isolated)
+            logger.info("Профиль %s зашифрован (%d файлов)", isolated, encrypted_count)
         logger.info("Контекст %s закрыт (осталось %d)", context_id, len(self._contexts))
 
     async def close(self) -> None:
-        # Закрываем все контексты
+        # Закрываем все контексты (в persistent-режиме они и есть браузеры)
         for context_id in list(self._contexts.keys()):
             await self.close_context(context_id)
-        if self._browser:
-            await self._browser.close()
+        if self._context is not None:
+            await self._context.close()
+            self._context = None
         if self._playwright:
             await self._playwright.stop()
+            self._playwright = None
         logger.info("Browser session closed")
 
         # Шифруем профиль после остановки, чтобы защитить сессию на диске
         if self.profile_dir and Path(self.profile_dir).exists():
             encrypted_count = encrypt_directory_contents(self.profile_dir)
             logger.info("Профиль браузера зашифрован (%d файлов)", encrypted_count)
+
+    @property
+    def is_started(self) -> bool:
+        """Браузер запущен и готов принимать команды."""
+        return self._context is not None
 
     @property
     def page(self) -> Page:
@@ -265,12 +299,12 @@ async def capture_evidence(page: Page, task_id: str, prefix: str = "step") -> di
     await page.screenshot(path=str(screenshot_path), full_page=True)
 
     video_path = None
-    if page.context and page.context.options.get("record_video_dir"):
+    video = page.video
+    if video is not None:
         try:
-            video = await page.video()
-            video_path = video.path()
-        except Exception:
-            video_path = None
+            video_path = await video.path()
+        except Exception as e:
+            logger.warning("Не удалось получить путь к видео: %s", e)
 
     meta = {
         "task_id": task_id,

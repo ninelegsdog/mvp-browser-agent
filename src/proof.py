@@ -9,9 +9,9 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.config import settings
 
@@ -30,13 +30,13 @@ class EvidenceRecorder:
     def record_step(
         self,
         step_name: str,
-        data: Optional[Dict[str, Any]] = None,
-        screenshot_path: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        data: dict[str, Any] | None = None,
+        screenshot_path: str | None = None,
+    ) -> dict[str, Any]:
         entry = {
             "task_id": self.task_id,
             "step": step_name,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "data": data or {},
             "screenshot": screenshot_path,
         }
@@ -45,14 +45,14 @@ class EvidenceRecorder:
         logger.info("Evidence step: %s (%s)", step_name, self.task_id)
         return entry
 
-    def record_failure(self, error: Exception, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def record_failure(self, error: Exception, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         """Фиксирует сбой по схеме defect.v1."""
         defect = {
             "task_id": self.task_id,
             "status": "failed",
             "error": str(error),
             "error_type": type(error).__name__,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "steps": self.steps,
             "extra": extra or {},
         }
@@ -61,7 +61,7 @@ class EvidenceRecorder:
         logger.error("Defect recorded: %s", path)
         return defect
 
-    def record_success(self, result: Dict[str, Any]) -> None:
+    def record_success(self, result: dict[str, Any]) -> None:
         path = self.dir / "result.v1.json"
         path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.info("Success recorded: %s", path)
@@ -72,7 +72,7 @@ class EvidenceRecorder:
             if self.steps:
                 f.write(json.dumps(self.steps[-1], ensure_ascii=False) + "\n")
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
             "steps_count": len(self.steps),
@@ -80,7 +80,7 @@ class EvidenceRecorder:
         }
 
 
-def read_only_evidence(task_id: str) -> Dict[str, Any]:
+def read_only_evidence(task_id: str) -> dict[str, Any]:
     """Чтение артефактов задачи (read-only доступ для агента).
 
     Агент может читать, но не записывать — предотвращает донавредить.

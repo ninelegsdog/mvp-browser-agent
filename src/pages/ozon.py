@@ -3,10 +3,6 @@
 Инкапсулирует селекторы и действия для поиска товара и оформления заказа.
 """
 
-from typing import Optional
-
-from playwright.async_api import Page
-
 
 class OzonPage:
     """Страница Ozon с базовыми действиями."""
@@ -32,14 +28,13 @@ class OzonPage:
         await self.page.click(self.SEARCH_BUTTON)
         await self.page.wait_for_timeout(2000)
 
-    async def first_product(self) -> Optional[str]:
+    async def first_product(self) -> str | None:
         """Вернуть URL первого товара или None."""
         try:
             await self.page.wait_for_selector(self.PRODUCT_CARD, timeout=5000)
             element = self.page.locator(self.PRODUCT_CARD).first
             link = element.locator("a").first
-            href = await link.get_attribute("href")
-            return href
+            return await link.get_attribute("href")
         except Exception:
             return None
 

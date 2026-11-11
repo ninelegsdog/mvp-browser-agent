@@ -11,12 +11,11 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import asyncpg
 
-from src.config import settings
 from src.security import assert_no_secrets_in_text
 
 logger = logging.getLogger(__name__)
@@ -28,9 +27,9 @@ OUTBOX_TABLE = "outbox"
 class OutboxEvent:
     id: int
     event_type: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     created_at: str
-    processed_at: Optional[str] = None
+    processed_at: str | None = None
 
 
 class Outbox:
@@ -54,11 +53,11 @@ class Outbox:
                 """
             )
 
-    async def emit(self, event_type: str, payload: Dict[str, Any], conn=None) -> int:
+    async def emit(self, event_type: str, payload: dict[str, Any], conn=None) -> int:
         """Вставить событие. Лучше в той же транзакции, что и бизнес-изменение."""
         payload_json = json.dumps(payload, ensure_ascii=False)
         assert_no_secrets_in_text(payload_json, "outbox.emit")
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
 
         if conn:
             row = await conn.fetchrow(
@@ -85,7 +84,7 @@ class Outbox:
                 )
         return row["id"]
 
-    async def pending(self, limit: int = 100) -> List[OutboxEvent]:
+    async def pending(self, limit: int = 100) -> list[OutboxEvent]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
@@ -108,9 +107,9 @@ class Outbox:
             for r in rows
         ]
 
-    async def mark_processed(self, event_id: int, processed_at: str = None) -> None:
+    async def mark_processed(self, event_id: int, processed_at: str | None = None) -> None:
         if processed_at is None:
-            processed_at = datetime.now(timezone.utc).isoformat()
+            processed_at = datetime.now(UTC).isoformat()
         async with self.pool.acquire() as conn:
             await conn.execute(
                 f"UPDATE {OUTBOX_TABLE} SET processed_at = $1 WHERE id = $2",

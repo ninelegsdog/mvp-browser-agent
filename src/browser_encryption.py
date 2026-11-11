@@ -8,9 +8,7 @@
 используют существующий ключ для расшифровки/шифрования профиля.
 """
 
-import os
 from pathlib import Path
-from typing import Optional
 
 from cryptography.fernet import Fernet
 
@@ -53,7 +51,7 @@ def encrypt_file(file_path: str | Path) -> None:
     path.chmod(0o600)
 
 
-def decrypt_file(file_path: str | Path, output_path: Optional[str | Path] = None) -> Path:
+def decrypt_file(file_path: str | Path, output_path: str | Path | None = None) -> Path:
     """Расшифровывает файл. Если output_path не задан, перезаписывает исходный."""
     path = Path(file_path)
     if not path.exists():

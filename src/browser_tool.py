@@ -5,10 +5,9 @@
 Все действия фиксируются как доказательство (схема defect.v1).
 """
 
-import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from playwright.async_api import Page
 
@@ -18,6 +17,18 @@ from src.proof import EvidenceRecorder
 from src.security import assert_no_secrets_in_text
 
 logger = logging.getLogger(__name__)
+
+# Селекторы, которые следует избегать при автоматическом клике (защита от случайного Actions)
+DANGEROUS_SELECTORS = [
+    "button[type=submit]",
+    "input[type=submit]",
+    "button.delete",
+    "button.remove",
+    "[data-action=delete]",
+    "[data-action=remove]",
+    "[data-action=pay]",
+    "[data-action=purchase]",
+]
 
 
 class BrowserTool:
@@ -30,7 +41,7 @@ class BrowserTool:
         self,
         input: str,
         task_id: str,
-        action: Optional[Dict[str, Any]] = None,
+        action: dict[str, Any] | None = None,
     ) -> str:
         """Выполнить действие в браузере.
 
@@ -39,7 +50,7 @@ class BrowserTool:
         """
         assert_no_secrets_in_text(input, f"browser_tool.{task_id}")
 
-        if not self.session._browser:
+        if not self.session.is_started:
             await self.session.start()
 
         # Парсим вход: может быть "действие: цель" или просто цель
@@ -58,41 +69,75 @@ class BrowserTool:
             action_type = action_str
             action_value = None
 
-        try:
-            if action_type in ("открыть", "перейти", "goto", "open"):
-                return await self._open_page(target, task_id)
-            elif action_type in ("заполнить", "fill", "input"):
-                return await self._fill_field(target, action_value or "", task_id)
-            elif action_type in ("кликнуть", "click", "press"):
-                return await self._click_element(target, task_id)
-            elif action_type in ("прокрутить", "scroll"):
-                return await self._scroll_page(target, task_id)
-            elif action_type in ("подождать", "wait"):
-                return await self._wait_for_element(target, task_id)
-            elif action_type in ("прочитать", "read", "get_text"):
-                return await self._read_element(target, task_id)
-            elif action_type in ("скриншот", "screenshot"):
-                return await self._take_screenshot(task_id, prefix="screenshot")
-            elif action_type in ("заголовок", "title", "get_title"):
-                return await self._get_page_title(task_id)
-            elif action_type in ("завершить", "finish", "done"):
-                return f"Задача завершена. Результат: {target or 'без деталей'}"
-            elif action_type in ("подтвердить_с_пользователем", "confirm_user"):
-                return f"Ожидает подтверждения пользователя: {target or 'действие требует подтверждения'}"
-            else:
-                return f"Неизвестное действие: {action_type}. Доступные: открыть, заполнить, кликнуть, прокрутить, подождать, прочитать, скриншот, заголовок, завершить, подтвердить_с_пользователем"
+        # Текстовый формат заполнения: "заполнить: <селектор>: <значение>".
+        # Делим по ": " (двоеточие + пробел), чтобы не ломать псевдоклассы
+        # вида button:has-text("...") — там двоеточия без пробела.
+        if action_value is None and action_type in ("заполнить", "fill", "input") and ": " in target:
+            target, action_value = target.split(": ", 1)
+            target = target.strip()
 
+        try:
+            return await self._dispatch(action_type, target, action_value, task_id)
         except Exception as e:
-            logger.error(f"Ошибка браузера при действии {action_type}: {e}")
+            logger.exception("Ошибка браузера при действии %s", action_type)
             return f"Ошибка браузера: {str(e)}"
+
+    async def _dispatch(self, action_type: str, target: str, action_value: str | None, task_id: str) -> str:
+        """Маршрутизация действия к соответствующему методу браузера."""
+        # Действия, которым нужен только task_id
+        simple = {
+            "скриншот": lambda: self._take_screenshot(task_id, prefix="screenshot"),
+            "screenshot": lambda: self._take_screenshot(task_id, prefix="screenshot"),
+            "заголовок": lambda: self._get_page_title(task_id),
+            "title": lambda: self._get_page_title(task_id),
+            "get_title": lambda: self._get_page_title(task_id),
+        }
+        if action_type in simple:
+            return await simple[action_type]()
+
+        # Действия с целью (target)
+        with_target = {
+            "открыть": self._open_page,
+            "перейти": self._open_page,
+            "goto": self._open_page,
+            "open": self._open_page,
+            "кликнуть": self._click_element,
+            "click": self._click_element,
+            "press": self._click_element,
+            "прокрутить": self._scroll_page,
+            "scroll": self._scroll_page,
+            "подождать": self._wait_for_element,
+            "wait": self._wait_for_element,
+            "прочитать": self._read_element,
+            "read": self._read_element,
+            "get_text": self._read_element,
+        }
+        if action_type in with_target:
+            return await with_target[action_type](target, task_id)
+
+        if action_type in ("заполнить", "fill", "input"):
+            return await self._fill_field(target, action_value or "", task_id)
+
+        if action_type in ("завершить", "finish", "done"):
+            return f"Задача завершена. Результат: {target or 'без деталей'}"
+
+        if action_type in ("подтвердить_с_пользователем", "confirm_user"):
+            return f"Ожидает подтверждения пользователя: {target or 'действие требует подтверждения'}"
+
+        return (
+            f"Неизвестное действие: {action_type}. "
+            "Доступные: открыть, заполнить, кликнуть, прокрутить, подождать, "
+            "прочитать, скриншот, заголовок, завершить, подтвердить_с_пользователем"
+        )
 
     async def _open_page(self, url: str, task_id: str) -> str:
         """Открыть страницу по URL."""
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+
         page = await self.session.navigate(url)
         title = await page.title()
-        meta = await self._capture_evidence(
-            page, task_id, f"open_{url.replace('://', '_').replace('/', '_')[:50]}"
-        )
+        meta = await self._capture_evidence(page, task_id, f"open_{url.replace('://', '_').replace('/', '_')[:50]}")
         return f"Открыт {url} (заголовок: {title}). Скриншот: {meta['screenshot']}"
 
     async def _fill_field(self, selector: str, value: str, task_id: str) -> str:
@@ -111,6 +156,12 @@ class BrowserTool:
             raise RuntimeError("Нет открытой страницы. Сначала откройте сайт через действие 'открыть'.")
 
         page = self.session.page
+
+        # Проверка на опасные селекторы
+        for dangerous in DANGEROUS_SELECTORS:
+            if dangerous in selector.lower():
+                raise ValueError(f"Блокировка действия: попытка клика по потенциально опасному селектору: {selector}")
+
         await page.click(selector, timeout=self.session.action_timeout_ms)
         meta = await self._capture_evidence(page, task_id, f"click_{selector.replace(':', '_').replace(' ', '_')[:40]}")
         return f"Клик по элементу {selector}. Скриншот: {meta['screenshot']}"
@@ -121,10 +172,14 @@ class BrowserTool:
             raise RuntimeError("Нет открытой страницы.")
 
         page = self.session.page
-        await page.evaluate(
-            f"() => {{ const el = document.querySelector('{selector}'); if(el) el.scrollIntoView(); else window.scrollBy(0, 500); }}"
+        script = (
+            "() => { const el = document.querySelector(arguments[0]);"
+            " if (el) el.scrollIntoView(); else window.scrollBy(0, 500); }"
         )
-        meta = await self._capture_evidence(page, task_id, f"scroll_{selector.replace(':', '_').replace(' ', '_')[:40]}")
+        await page.evaluate(script, selector)
+        meta = await self._capture_evidence(
+            page, task_id, f"scroll_{selector.replace(':', '_').replace(' ', '_')[:40]}"
+        )
         return f"Прокрутка выполнена для {selector}. Скриншот: {meta['screenshot']}"
 
     async def _wait_for_element(self, selector: str, task_id: str) -> str:
@@ -143,7 +198,7 @@ class BrowserTool:
             raise RuntimeError("Нет открытой страницы.")
 
         page = self.session.page
-        text_content = await page.locator(selector).first.text_content(timeout=self.session.action_timeout_ms)
+        text_content = (await page.locator(selector).first.text_content(timeout=self.session.action_timeout_ms)) or ""
         meta = await self._capture_evidence(page, task_id, f"read_{selector.replace(':', '_').replace(' ', '_')[:40]}")
         return f"Текст элемента {selector}: {text_content[:500]}. Скриншот: {meta['screenshot']}"
 

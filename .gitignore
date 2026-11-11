@@ -14,6 +14,8 @@ env/
 
 # Browser profiles (contain live sessions and cookies — never commit)
 browser-profile/
+browser-profile-*/
+*-profile/
 
 # Evidence artifacts (screenshots, videos, traces)
 evidence/
@@ -30,7 +32,15 @@ evidence/
 # Tests
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
 
 # Docker
 .dockerignore
+
+# Local secrets (age-encrypted env is allowed, decrypted is not)
+*.key
+*.pem

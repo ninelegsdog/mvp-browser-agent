@@ -12,21 +12,19 @@ import sys
 # Добавляем корень проекта в путь
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.config import settings
-from src.security import (
-    ensure_secrets_dir,
-    mask_secret,
-    check_profile_permissions,
-    assert_no_secrets_in_text,
-)
-from src.queue import TaskQueue, Task
-from src.proof import EvidenceRecorder, read_only_evidence
-from src.agent import Agent, AgentTask
-from src.queue_interface import TaskQueueInterface
+from src.agent import Agent, build_planner
 from src.browser import BrowserSession
 from src.browser_tool import BrowserTool
-from src.autonomous_planner import AutonomousPlanner, LLMClient
-from src.tools import Tool, shell_tool, http_tool, memory_tool
+from src.config import settings
+from src.proof import EvidenceRecorder, read_only_evidence
+from src.queue import Task, TaskQueue
+from src.security import (
+    assert_no_secrets_in_text,
+    check_profile_permissions,
+    ensure_secrets_dir,
+    mask_secret,
+)
+from src.tools import Tool, http_tool, memory_tool, shell_tool
 
 
 async def main():
@@ -42,7 +40,9 @@ async def main():
     print("DB_PASSWORD:", mask_secret(settings.DB_PASSWORD))
     print("LLM_API_KEY:", mask_secret(settings.LLM_API_KEY))
 
-    # Попытка протащить секрет в лог — должна упасть
+    # Попытка протащить секрет в лог — должна упасть.
+    # Строка ниже — намеренно ненастоящий ключ: он существует только для
+    # демонстрации детектора и ничего не открывает.
     try:
         assert_no_secrets_in_text("my key is sk-1234567890abcdef1234567890", "demo.log")
         print("ОШИБКА: секрет должен быть отклонён")
@@ -62,18 +62,16 @@ async def main():
         "memory": Tool("memory", memory_tool, "Память задачи и предпочтений"),
     }
 
-    # 4. Инициализация LLM-планировщика
-    llm_client = LLMClient(
-        api_key=settings.LLM_API_KEY,
-        base_url=settings.LLM_BASE_URL,
-        model=settings.LLM_MODEL,
-        temperature=settings.LLM_TEMPERATURE,
-        max_tokens=settings.LLM_MAX_TOKENS,
-    )
-    planner = AutonomousPlanner(llm_client)
+    # 4. Инициализация LLM-планировщика (None без ключа — без имитации автономности)
+    planner = build_planner()
+    if planner is None:
+        print("LLM_API_KEY не задан: демонстрируется каркас задач без автономных решений")
+    else:
+        print("Агент готов, планировщик:", type(planner).__name__)
 
     # 5. Инициализация агента
     agent_instance = Agent(tools=tools, planner=planner, browser_session=browser_session)
+    print("Инструменты агента:", ", ".join(sorted(agent_instance.tools)))
 
     # 6. Демонстрация очереди задач (используем fakeredis для демонстрации)
     from fakeredis.aioredis import FakeRedis
@@ -82,7 +80,7 @@ async def main():
     q = TaskQueue(redis_url="redis://localhost")
     q._redis = r
 
-    task = Task(task_id="demo-1", input_text="закажи билеты в кино", priority="high")
+    task = Task(task_id="demo-1", input="закажи билеты в кино", priority="high")
     await q.enqueue(task)
     popped = await q.pop()
     print("Извлечена задача:", popped.task_id, popped.input)
@@ -108,13 +106,5 @@ async def main():
     print("  python -m src.queue worker   # Очередь задач")
 
 
-async def main_wrapper():
-    try:
-        await main()
-    finally:
-        # Закрываем LLM клиент если он есть
-        pass
-
-
 if __name__ == "__main__":
-    asyncio.run(main_wrapper())
+    asyncio.run(main())

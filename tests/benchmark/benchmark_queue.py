@@ -1,24 +1,21 @@
 """Benchmark-тесты для критических путей."""
 
 import asyncio
-import time
-import statistics
-import sys
 import os
+import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fakeredis.aioredis import FakeRedis
-from src.queue import TaskQueue, Task
-from src.outbox import Outbox, OutboxEvent, OutboxDispatcher, LoggingPublisher
+
+from src.outbox import Outbox, OutboxEvent
+from src.queue import Task, TaskQueue
 
 
 async def benchmark_queue_enqueue_pop(queue: TaskQueue, n: int = 1000):
     """Бенчмарк: enqueue + pop n задач."""
-    tasks = [
-        Task(task_id=f"bench-{i}", input=f"benchmark task {i}", priority="med")
-        for i in range(n)
-    ]
+    tasks = [Task(task_id=f"bench-{i}", input=f"benchmark task {i}", priority="med") for i in range(n)]
 
     # Измеряем enqueue
     start = time.perf_counter()
@@ -104,7 +101,7 @@ async def run_benchmarks():
 
     # Outbox
     print("\n--- Outbox ---")
-    conn = r  # Используем тот же Redis для простоты
+    # Используем тот же Redis для простоты
     outbox = Outbox.__new__(Outbox)
     outbox._pool = r
 

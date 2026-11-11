@@ -9,53 +9,47 @@
 
 import logging
 import tracemalloc
-from typing import Any, Dict, Optional
+from typing import Any
 
 from aiohttp import web
 
+from src.config import settings
+
 try:
-    from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram
+    from prometheus_client import generate_latest as _prometheus_generate_latest
 except ImportError:  # pragma: no cover - prometheus_client может отсутствовать в тестах
-    Counter = Histogram = None  # type: ignore
-
-    def generate_latest():
-        return b""
-
+    Counter = Histogram = None  # type: ignore[assignment,misc]
+    _prometheus_generate_latest = None  # type: ignore[assignment]
     CONTENT_TYPE_LATEST = "text/plain"
+
+
+def generate_latest() -> bytes:
+    """Тело ответа /metrics. Без prometheus_client — пустой набор метрик."""
+    if _prometheus_generate_latest is None:
+        return b""
+    return _prometheus_generate_latest()
 
 
 logger = logging.getLogger(__name__)
 
-if Counter:
-    UPDATES_TOTAL = Counter(
-        "mvp_agent_updates_total", "Всего обновлений", ["type"]
-    )
-    ERRORS_TOTAL = Counter(
-        "mvp_agent_errors_total", "Всего ошибок", ["error_type"]
-    )
-    HANDLER_DURATION = Histogram(
-        "mvp_agent_handler_duration_seconds", "Длительность обработки"
-    )
-    QUEUE_DEPTH = Counter(
-        "mvp_agent_queue_depth", "Текущая глубина очереди", ["queue"]
-    )
-    RETRY_COUNT = Histogram(
-        "mvp_agent_retry_count", "Количество повторов задачи", ["queue", "error_category"]
-    )
-    TASK_SUCCESS_TOTAL = Counter(
-        "mvp_agent_task_success_total", "Успешные задачи", ["type"]
-    )
-    TASK_FAILURE_TOTAL = Counter(
-        "mvp_agent_task_failure_total", "Неуспешные задачи", ["type", "error_category"]
-    )
-else:
-    UPDATES_TOTAL = ERRORS_TOTAL = HANDLER_DURATION = QUEUE_DEPTH = RETRY_COUNT = TASK_SUCCESS_TOTAL = TASK_FAILURE_TOTAL = None
+if Counter is not None:
+    UPDATES_TOTAL = Counter("mvp_agent_updates_total", "Всего обновлений", ["type"])
+    ERRORS_TOTAL = Counter("mvp_agent_errors_total", "Всего ошибок", ["error_type"])
+    HANDLER_DURATION = Histogram("mvp_agent_handler_duration_seconds", "Длительность обработки")
+    QUEUE_DEPTH = Counter("mvp_agent_queue_depth", "Текущая глубина очереди", ["queue"])
+    RETRY_COUNT = Histogram("mvp_agent_retry_count", "Количество повторов задачи", ["queue", "error_category"])
+    TASK_SUCCESS_TOTAL = Counter("mvp_agent_task_success_total", "Успешные задачи", ["type"])
+    TASK_FAILURE_TOTAL = Counter("mvp_agent_task_failure_total", "Неуспешные задачи", ["type", "error_category"])
+else:  # prometheus_client не установлен: метрики недоступны
+    UPDATES_TOTAL = ERRORS_TOTAL = HANDLER_DURATION = QUEUE_DEPTH = RETRY_COUNT = None  # type: ignore[assignment]
+    TASK_SUCCESS_TOTAL = TASK_FAILURE_TOTAL = None  # type: ignore[assignment]
 
 
 async def metrics_handler(request):
-    if generate_latest:
-        return web.Response(body=generate_latest(), content_type=CONTENT_TYPE_LATEST)
-    return web.Response(text="prometheus_client not installed", status=503)
+    if _prometheus_generate_latest is None:
+        return web.Response(text="prometheus_client not installed", status=503)
+    return web.Response(body=generate_latest(), content_type=CONTENT_TYPE_LATEST)
 
 
 async def health_handler(request):
@@ -118,15 +112,17 @@ async def readiness_handler(request):
     checks = {"redis": False, "postgres": False}
     try:
         import redis.asyncio as redis_async
+
         r = redis_async.from_url(settings.REDIS_URL, decode_responses=True)
         await r.ping()
         checks["redis"] = True
         await r.aclose()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Readiness: Redis недоступен: %s", e)
 
     try:
         import asyncpg
+
         conn = await asyncpg.connect(
             host=settings.DB_HOST,
             port=settings.DB_PORT,
@@ -138,8 +134,8 @@ async def readiness_handler(request):
         await conn.fetch("SELECT 1")
         checks["postgres"] = True
         await conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Readiness: PostgreSQL недоступен: %s", e)
 
     all_ready = all(checks.values())
     status_code = 200 if all_ready else 503
@@ -173,7 +169,7 @@ async def start_metrics_server(port: int = 9090):
     app = create_metrics_app()
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, settings.METRICS_HOST, port)
     await site.start()
     logger.info("Metrics server started on port %d", port)
     return runner
@@ -184,17 +180,21 @@ async def start_metrics_server(port: int = 9090):
 SUCCESS_RATE_THRESHOLD = 0.90  # 90% успешных задач
 
 
-def get_success_rate() -> Optional[float]:
+def get_success_rate() -> float | None:
     """Рассчитать successful rate на основе накопленных счётчиков."""
     if TASK_SUCCESS_TOTAL is None or TASK_FAILURE_TOTAL is None:
         return None
     try:
-        success = sum(
-            s.value for s in TASK_SUCCESS_TOTAL._metrics.values()
-        ) if hasattr(TASK_SUCCESS_TOTAL, '_metrics') else 0
-        failure = sum(
-            s.value for s in TASK_FAILURE_TOTAL._metrics.values()
-        ) if hasattr(TASK_FAILURE_TOTAL, '_metrics') else 0
+        success = (
+            sum(getattr(s, "value", 0) for s in TASK_SUCCESS_TOTAL._metrics.values())
+            if hasattr(TASK_SUCCESS_TOTAL, "_metrics")
+            else 0
+        )
+        failure = (
+            sum(getattr(s, "value", 0) for s in TASK_FAILURE_TOTAL._metrics.values())
+            if hasattr(TASK_FAILURE_TOTAL, "_metrics")
+            else 0
+        )
         total = success + failure
         if total == 0:
             return None
@@ -203,7 +203,7 @@ def get_success_rate() -> Optional[float]:
         return None
 
 
-def check_success_rate_alert() -> Optional[Dict[str, Any]]:
+def check_success_rate_alert() -> dict[str, Any] | None:
     """Проверить successful rate и вернуть алерт если ниже порога."""
     rate = get_success_rate()
     if rate is None:
@@ -227,17 +227,15 @@ SLO_ERROR_RATE_TARGET = 1.0  # %
 MEMORY_TRACING_ENABLED = False
 
 
-def start_memory_tracing():
-    """Включить отслеживание выделения памяти."""
-    global MEMORY_TRACING_ENABLED
-    if not MEMORY_TRACING_ENABLED:
+def start_memory_tracing() -> None:
+    """Включить отслеживание выделения памяти (идемпотентно)."""
+    if not tracemalloc.is_tracing():
         tracemalloc.start()
-        MEMORY_TRACING_ENABLED = True
 
 
-def get_memory_usage() -> Optional[Dict[str, float]]:
+def get_memory_usage() -> dict[str, float] | None:
     """Получить текущее использование памяти."""
-    if not MEMORY_TRACING_ENABLED:
+    if not tracemalloc.is_tracing():
         return None
     current, peak = tracemalloc.get_traced_memory()
     return {
@@ -248,7 +246,7 @@ def get_memory_usage() -> Optional[Dict[str, float]]:
     }
 
 
-def get_slo_status() -> Dict[str, Any]:
+def get_slo_status() -> dict[str, Any]:
     """Получить статус SLO/SLI."""
     return {
         "uptime_target": SLO_UPTIME_TARGET,
@@ -278,9 +276,8 @@ def record_business_task(task_type: str, duration_seconds: float, success: bool 
     if TASK_SUCCESS_TOTAL:
         if success:
             TASK_SUCCESS_TOTAL.labels(type=task_type).inc()
-        else:
-            if TASK_FAILURE_TOTAL:
-                TASK_FAILURE_TOTAL.labels(type=task_type, error_category="other").inc()
+        elif TASK_FAILURE_TOTAL:
+            TASK_FAILURE_TOTAL.labels(type=task_type, error_category="other").inc()
 
     if BUSINESS_TASKS_COMPLETED:
         BUSINESS_TASKS_COMPLETED.labels(task_type=task_type).inc()
