@@ -62,6 +62,12 @@ def confirmation_keyboard(task_id: str) -> InlineKeyboardMarkup:
     )
 
 
+def _callback_message(callback: CallbackQuery) -> Message | None:
+    """Сообщение с кнопкой. Может быть недоступно — тогда молча пропускаем."""
+    message = callback.message
+    return message if isinstance(message, Message) else None
+
+
 def is_admin(user_id: int) -> bool:
     """Проверка белого списка администраторов."""
     return bool(settings.BOT_ADMIN_ID) and user_id == settings.BOT_ADMIN_ID
@@ -77,7 +83,8 @@ def admin_only(func):
 
     @functools.wraps(func)
     async def wrapper(message: Message, *args, **kwargs):
-        if not is_admin(message.from_user.id):
+        user = message.from_user
+        if user is None or not is_admin(user.id):
             await message.answer("Доступ запрещен.")
             return None
         return await func(message, *args, **kwargs)
@@ -90,7 +97,8 @@ def admin_only_callback(func):
 
     @functools.wraps(func)
     async def wrapper(callback: CallbackQuery, *args, **kwargs):
-        if not is_admin(callback.from_user.id):
+        user = callback.from_user
+        if user is None or not is_admin(user.id):
             await callback.answer("Доступ запрещен.")
             return None
         return await func(callback, *args, **kwargs)
@@ -168,7 +176,11 @@ async def handle_message(message: Message, state: FSMContext):
 @dp.callback_query(F.data.startswith(("stop:", "cancel:", "continue:")))
 @admin_only_callback
 async def cb_control(callback: CallbackQuery, state: FSMContext):
-    action, task_id = callback.data.split(":", 1)
+    data = callback.data or ""
+    if ":" not in data:
+        await callback.answer("Некорректная команда")
+        return
+    action, task_id = data.split(":", 1)
     task = agent.get_task(task_id)
     if not task:
         await callback.answer("Задача не найдена")
@@ -201,53 +213,65 @@ async def cb_control(callback: CallbackQuery, state: FSMContext):
             asyncio.create_task(_run_agent_task(task.task_id))
             await callback.answer("Продолжаю выполнение...")
 
-    await callback.message.edit_reply_markup(reply_markup=task_keyboard(task_id))
+    message = _callback_message(callback)
+    if message is not None:
+        await message.edit_reply_markup(reply_markup=task_keyboard(task_id))
 
 
 @dp.callback_query(F.data.startswith(("confirm:", "cancel_action:", "change_plan:")))
 @admin_only_callback
 async def cb_confirmation(callback: CallbackQuery, state: FSMContext):
     """Обработка подтверждения/отмены действия пользователем."""
-    action_type, task_id = callback.data.split(":", 1)
+    data = callback.data or ""
+    if ":" not in data:
+        await callback.answer("Некорректная команда")
+        return
+    action_type, task_id = data.split(":", 1)
     task = agent.get_task(task_id)
     if not task or not task.awaits_user:
         await callback.answer("Нет ожидающего действия для подтверждения")
         return
 
+    message = _callback_message(callback)
+
     if action_type == "confirm":
         agent.confirm_action(task_id, confirmed=True)
         await callback.answer("Подтверждено. Выполняю действие...")
-        await callback.message.edit_reply_markup(reply_markup=task_keyboard(task_id))
         # Выполняем именно подтверждённое действие, затем продолжаем цикл
         asyncio.create_task(_resume_agent_task(task_id))
-        await callback.message.edit_text(
-            f"Задача {task.task_id}\nСостояние: {task.state.value}\nСтатус: подтверждено",
-            reply_markup=task_keyboard(task_id),
-        )
+        if message is not None:
+            await message.edit_text(
+                f"Задача {task.task_id}\nСостояние: {task.state.value}\nСтатус: подтверждено",
+                reply_markup=task_keyboard(task_id),
+            )
         return
 
     if action_type == "cancel_action":
         agent.confirm_action(task_id, confirmed=False)
         await callback.answer("Отменено пользователем")
-        await callback.message.edit_reply_markup(reply_markup=task_keyboard(task_id))
         # Агент пересматривает план без отменённого действия
         asyncio.create_task(_run_agent_task(task_id))
-        await callback.message.edit_text(
-            f"Задача {task.task_id}\nСостояние: {task.state.value}\nСтатус: отменено",
-            reply_markup=task_keyboard(task_id),
-        )
+        if message is not None:
+            await message.edit_text(
+                f"Задача {task.task_id}\nСостояние: {task.state.value}\nСтатус: отменено",
+                reply_markup=task_keyboard(task_id),
+            )
         return
 
     # change_plan: пользователь хочет изменить формулировку — просим новый текст
     await callback.answer()
-    await callback.message.answer("Опишите, что изменить в плане. Следующее сообщение заменит текущую задачу.")
+    prompt = "Опишите, что изменить в плане. Следующее сообщение заменит текущую задачу."
+    if message is not None:
+        await message.answer(prompt)
+    else:
+        await callback.answer(prompt, show_alert=True)
 
 
 @dp.message(Command("evidence"))
 @admin_only
 async def cmd_evidence(message: Message):
     """Чтение доказательств (read-only для агента)."""
-    args = message.text.split()
+    args = (message.text or "").split()
     if len(args) < 2:
         await message.answer("Укажите task_id: /evidence <id>")
         return
