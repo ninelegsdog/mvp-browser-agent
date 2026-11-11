@@ -4,6 +4,11 @@ on:
     tags:
       - "v*"
 
+# Создание релиза — запись; по умолчанию у GITHUB_TOKEN только чтение,
+# и softprops/action-gh-release получает 403 «Resource not accessible».
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
