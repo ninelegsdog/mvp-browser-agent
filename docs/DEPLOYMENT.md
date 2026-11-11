@@ -18,7 +18,7 @@
 ```bash
 git clone https://github.com/ninelegsdog/mvp-browser-agent.git
 cd mvp-browser-agent
-git checkout v0.1.0
+git checkout v0.3.0
 ```
 
 ## Шаг 2. Настройка переменных окружения

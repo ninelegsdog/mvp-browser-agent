@@ -39,7 +39,7 @@
   (`QR_LOGIN_TIMEOUT_SECONDS`), адрес прослушивания метрик (`METRICS_HOST`)
 - `tests/test_preflight.py`, `tests/test_qr_login.py`, `tests/test_agent.py`,
   `tests/test_tools.py`, `tests/test_browser_tool.py`, `tests/test_metrics.py`,
-  `tests/test_smart_locator.py` — 109 тестов
+  `tests/test_smart_locator.py` — 121 тестов
 
 ### Изменено
 - `BROWSER_HEADLESS` по умолчанию `false`: первый вход по QR требует видимого окна

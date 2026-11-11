@@ -52,7 +52,7 @@ services:
       BOT_TOKEN: ${BOT_TOKEN}
       BOT_ADMIN_ID: ${BOT_ADMIN_ID}
       BROWSER_PROFILE_DIR: /app/browser-profile
-      BROWSER_HEADLESS: "true"
+      BROWSER_HEADLESS: "false"
       EVIDENCE_DIR: /app/evidence
       LOG_LEVEL: INFO
       METRICS_PORT: 9090
