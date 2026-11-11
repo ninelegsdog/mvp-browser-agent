@@ -145,7 +145,7 @@ mvp-browser-agent/
 │   ├── telegram_bot.py    # aiogram бот, админ whitelist
 │   └── pages/             # Page Object Model (Ozon и др.)
 ├── scripts/               # preflight.py, qr_login.py, daily_report.py
-├── tests/                 # 109 тестов: юнит, контрактные, интеграционные
+├── tests/                 # 121 тестов: юнит, контрактные, интеграционные
 ├── migrations/            # SQL-миграции (outbox)
 ├── docs/                  # Полная документация
 │   ├── CLIENT-START.md    # Что нужно от заказчика для старта
