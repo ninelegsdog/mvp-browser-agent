@@ -11,11 +11,12 @@
 import asyncio
 import json
 import logging
-import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import fakeredis
 from fakeredis.aioredis import FakeRedis
 
 from src.config import settings
@@ -32,28 +33,36 @@ class ChaosTester:
         self.results = []
 
     async def test_redis_connection_loss(self):
-        """Тест: потеря соединения с Redis во время обработки задачи."""
+        """Тест: потеря соединения с Redis во время обработки задачи.
+
+        Проверяемое свойство: задача живёт в Redis, а не в памяти клиента.
+        Поэтому смерть клиента не теряет задачу — новый клиент к тому же
+        серверу её видит. Раньше тест подключал второй клиент к *другому*
+        серверу и требовал там задачу: так пройти он не мог никогда.
+        """
         logger.info("=== Тест: потеря соединения с Redis ===")
-        r = FakeRedis(decode_responses=True)
+        server = fakeredis.FakeServer()
+        r = FakeRedis(server=server, decode_responses=True)
         q = TaskQueue(redis_url="redis://localhost")
         q._redis = r
 
-        # Добавляем задачу
         task = Task(task_id="chaos-1", input="тест потери соединения", priority="high")
         await q.enqueue(task)
 
-        # Искусственно разрываем соединение
-        await r.aclose()
+        # Клиент умер: любая команда — ошибка соединения, как при обрыве сети.
+        class BrokenClient:
+            async def blpop(self, *args, **kwargs):
+                raise ConnectionError("connection lost")
 
-        # Пытаемся извлечь задачу - должно обработать ошибку корректно
+        q._redis = BrokenClient()
         try:
             result = await q.pop()
-            logger.warning(f"Неожиданно: pop вернул {result} после закрытия соединения")
-        except Exception as e:
+            logger.warning(f"Неожиданно: pop вернул {result} на мёртвом соединении")
+        except ConnectionError as e:
             logger.info(f"Ожидаемая ошибка при разорванном соединении: {e}")
 
-        # Переподключаемся
-        r2 = FakeRedis(decode_responses=True)
+        # Переподключаемся к тому же серверу: данные в Redis, а не в клиенте.
+        r2 = FakeRedis(server=server, decode_responses=True)
         q._redis = r2
         result = await q.pop()
         assert result is not None, "Задача должна быть доступна после переподключения"
