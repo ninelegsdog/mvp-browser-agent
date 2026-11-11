@@ -11,9 +11,9 @@
    ruff format --check .
    mypy --ignore-missing-imports src/
    pytest --cov=src --cov-fail-under=25
-   ```
+   ```text
 3. **Закоммитьте** с соблюдением Conventional Commits:
-   ```
+   ```text
    feat: добавить health check для PostgreSQL
    fix: исправить утечку секрета в логах очереди
    docs: обновить RUNBOOK для развёртывания на VPS

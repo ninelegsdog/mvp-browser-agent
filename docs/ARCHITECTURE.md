@@ -6,7 +6,7 @@
 
 ```mermaid
 graph TD
-    Client[Заказчик в Telegram] -->|Текст / Голос| Bot[aiogram Бот]
+    Client[Заказчик в Telegram] -->|Текст| Bot[aiogram Бот]
     Bot -->|Создание задачи| Queue[(Redis Очередь)]
     Queue -->|high / med / low| Worker[Воркер задач]
     Worker -->|Выбор инструментов| Agent[Агент-цикл]
@@ -60,7 +60,9 @@ graph TD
 ### 3. Браузерная автоматизация (`src/browser.py`, `src/browser_tool.py`)
 - **Реализация:** Playwright + постоянный профиль Chromium (`launch_persistent_context`)
 - **Вход:** QR-код (один раз с телефона, сессия сохраняется)
-- **Безопасность:** Профиль `0700`, вне git, отдельные профили по аккаунтам
+- **Безопасность:** Профиль `0700`, вне git, отдельные профили по аккаунтам;
+  шифрование профиля (`BROWSER_PROFILE_ENCRYPTION`, Fernet) — по умолчанию
+  выключено, включается для бэкапа и переноса
 - **Доказательство:** Скриншот + видео + метаданные на каждом шаге
 - **Готовность:** `BrowserSession.is_started` — у постоянного контекста нет
   отдельного `.browser`, поэтому проверка идёт по контексту
@@ -105,8 +107,8 @@ graph LR
 | Очередь | Redis | 7 |
 | БД | PostgreSQL | 15 |
 | Браузер | Playwright + Chromium | 1.49 |
-| Бот | aiogram | 3.4 |
+| Бот | aiogram | 3.31 |
 | Конфигурация | pydantic-settings | 2.16 |
 | Мониторинг | Prometheus client | 0.26 |
-| Веб | aiohttp | 3.11 |
+| Веб | aiohttp | 3.14 |
 | Контейнеризация | Docker | multi-stage |

@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # Сколько секунд ждать ручной вход по QR, прежде чем сказать «не вошли»
     QR_LOGIN_TIMEOUT_SECONDS: int = 600
 
+    # Шифрование профиля после остановки. По умолчанию выключено: основная
+    # защита — права 0700 и профиль вне git, а шифрование большого профиля
+    # занимает секунды-минуты и нужно прежде всего для переноса/бэкапа.
+    BROWSER_PROFILE_ENCRYPTION: bool = False
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

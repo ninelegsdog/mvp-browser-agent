@@ -38,11 +38,11 @@
 
 Все руководители projektu обязаны соблюдать Кодекс поведения во всех обстоятельствах при администрировании вопросов и инцидентов, и любые руководители, не исполняющие Кодекс поведения, могут временно или постоянно отсутствовать в положении руководителя.
 
-##_ATTRIBUTION
+## ATTRIBUTION
 
 Этот Кодекс поведения адаптирован от Конвента участников сообщества, доступного по адресу
-https://www.contributor-covenant.org/version/1/4/code-of-conduct.html
+<https://www.contributor-covenant.org/version/1/4/code-of-conduct.html>
 
 Ответы на часто задаваемые вопросы о этом кодексе поведения можно найти по адресу
-https://www.contributor-covenant.org/faq. Переводы этого кодекса поведения доступны по адресу
-https://www.contributor-covenant.org/translations.
+<https://www.contributor-covenant.org/faq>. Переводы этого кодекса поведения доступны по адресу
+<https://www.contributor-covenant.org/translations>.

@@ -16,7 +16,7 @@ from typing import Literal
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
-from src.browser_encryption import decrypt_directory_contents, encrypt_directory_contents, is_encrypted
+from src.browser_encryption import decrypt_profile, encrypt_profile, is_profile_encrypted
 from src.config import settings
 from src.security import assert_no_secrets_in_text, check_profile_permissions
 
@@ -77,10 +77,7 @@ class BrowserSession:
             logger.warning("Profile dir %s is not 0700 — fixing", self.profile_dir)
             os.chmod(self.profile_dir, 0o700)
 
-        # Расшифровываем профиль перед запуском, если он зашифрован
-        if is_encrypted(self.profile_dir):
-            logger.info("Профиль браузера зашифрован — расшифровываем перед запуском")
-            decrypt_directory_contents(self.profile_dir)
+        await self._decrypt_profile_if_needed(self.profile_dir)
 
         self._playwright = await async_playwright().start()
 
@@ -118,11 +115,20 @@ class BrowserSession:
         """Перейти по URL с таймаутом навигации."""
         if not self._context:
             raise RuntimeError("Browser not started")
-        page = await self._context.new_page()
+
+        # Переходим в текущей странице, а не создаём новую на каждый шаг:
+        # иначе каждая навигация оставляет открытую вкладку, а check_session
+        # смотрит на старую страницу и отвечает про неё.
+        page = self._page if self._page is not None and not self._page.is_closed() else None
+        if page is None:
+            page = await self._context.new_page()
+            self._page = page
         try:
             await page.goto(url, timeout=self.navigation_timeout_ms, wait_until=wait_until)
         except Exception:
             await page.close()
+            if self._page is page:
+                self._page = None
             raise
         return page
 
@@ -225,8 +231,7 @@ class BrowserSession:
         profile_path = Path(f"{self.profile_dir}-{context_id}")
         profile_path.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(profile_path, 0o700)
-        if is_encrypted(str(profile_path)):
-            decrypt_directory_contents(str(profile_path))
+        await self._decrypt_profile_if_needed(str(profile_path))
 
         context = await self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(profile_path),
@@ -252,9 +257,8 @@ class BrowserSession:
         await context.close()
         del self._contexts[context_id]
         isolated = self._isolated_dirs.pop(context_id, None)
-        if isolated and Path(isolated).exists():
-            encrypted_count = encrypt_directory_contents(isolated)
-            logger.info("Профиль %s зашифрован (%d файлов)", isolated, encrypted_count)
+        if isolated:
+            await self._encrypt_profile_if_enabled(isolated)
         logger.info("Контекст %s закрыт (осталось %d)", context_id, len(self._contexts))
 
     async def close(self) -> None:
@@ -269,10 +273,46 @@ class BrowserSession:
             self._playwright = None
         logger.info("Browser session closed")
 
-        # Шифруем профиль после остановки, чтобы защитить сессию на диске
-        if self.profile_dir and Path(self.profile_dir).exists():
-            encrypted_count = encrypt_directory_contents(self.profile_dir)
-            logger.info("Профиль браузера зашифрован (%d файлов)", encrypted_count)
+        # Шифруем профиль после остановки, чтобы защитить сессию на диске.
+        # По умолчанию выключено: основная защита — права 0700 и профиль вне git.
+        await self._encrypt_profile_if_enabled(self.profile_dir)
+
+    async def _decrypt_profile_if_needed(self, directory: str) -> None:
+        """Расшифровать профиль до запуска Chromium (в отдельном потоке)."""
+        self._check_profile_encryption(directory)
+        if not is_profile_encrypted(directory):
+            return
+        logger.info("Профиль %s зашифрован — расшифровываем перед запуском", directory)
+        count = await asyncio.to_thread(decrypt_profile, directory)
+        logger.info("Профиль %s расшифрован (%d файлов)", directory, count)
+
+    async def _encrypt_profile_if_enabled(self, directory: str) -> None:
+        """Зашифровать профиль после остановки Chromium, если включено."""
+        self._check_profile_encryption(directory)
+        if not settings.BROWSER_PROFILE_ENCRYPTION:
+            return
+        if not Path(directory).is_dir():
+            return
+        count = await asyncio.to_thread(encrypt_profile, directory)
+        if count:
+            logger.info("Профиль %s зашифрован (%d файлов)", directory, count)
+        else:
+            logger.info("Профиль %s уже был зашифрован", directory)
+
+    @staticmethod
+    def _check_profile_encryption(directory: str) -> None:
+        """Предупредить, если профиль зашифрован, а шифрование выключено.
+
+        Такой профиль расшифровывается всегда: иначе Chromium не сможет с ним
+        работать. Предупреждение нужно, чтобы выключенный флаг не выглядел как
+        «шифрование работает».
+        """
+        if not settings.BROWSER_PROFILE_ENCRYPTION and is_profile_encrypted(directory):
+            logger.warning(
+                "Профиль %s зашифрован, хотя BROWSER_PROFILE_ENCRYPTION выключен. "
+                "Расшифровываю для запуска; включите флаг, если шифрование нужно.",
+                directory,
+            )
 
     @property
     def is_started(self) -> bool:

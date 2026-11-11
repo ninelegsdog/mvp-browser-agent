@@ -8,7 +8,7 @@
 [![Redis 7](https://img.shields.io/badge/redis-7-red)](https://redis.io/)
 [![PostgreSQL 15](https://img.shields.io/badge/postgresql-15-blue)](https://www.postgresql.org/)
 [![Playwright 1.49](https://img.shields.io/badge/playwright-1.49-green)](https://playwright.dev/)
-[![aiogram 3.4](https://img.shields.io/badge/aiogram-3.4-blue)](https://docs.aiogram.dev/)
+[![aiogram 3.31](https://img.shields.io/badge/aiogram-3.31-blue)](https://docs.aiogram.dev/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue)](https://www.docker.com/)
 [![CI](https://github.com/ninelegsdog/mvp-browser-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ninelegsdog/mvp-browser-agent/actions/workflows/ci.yml)
 [![Version: v0.3.0](https://img.shields.io/badge/version-v0.3.0-blue)](https://github.com/ninelegsdog/mvp-browser-agent/releases/tag/v0.3.0)
@@ -61,7 +61,7 @@
 
 ```mermaid
 graph TD
-    Client[Заказчик в Telegram] -->|Текст / Голос| Bot[aiogram Бот]
+    Client[Заказчик в Telegram] -->|Текст| Bot[aiogram Бот]
     Bot -->|Создание задачи| Queue[(Redis Очередь)]
     Queue -->|high / med / low| Worker[Воркер задач]
     Worker -->|Задача| Agent[ReAct-цикл + LLM-планировщик]
@@ -74,7 +74,6 @@ graph TD
 ```
 
 ---
-
 
 ## Быстрый старт
 
@@ -117,7 +116,7 @@ python -m src.queue worker &
 
 ## Структура репозитория
 
-```
+```text
 mvp-browser-agent/
 ├── README.md              # Этот файл — торговое предложение
 ├── SECURITY.md            # Политика безопасности
@@ -181,7 +180,8 @@ mvp-browser-agent/
 
 - **Секреты не в коде:** `.env` в `.gitignore`, ключи в `~/.secrets/keys/` (chmod 600)
 - **Секреты не в логах:** `assert_no_secrets_in_text()` блокирует попытку залогировать токены
-- **Профили браузера изолированы:** права `0700`, отдельные профили по аккаунтам (Ozon, Авито, WB, почта)
+- **Профили браузера изолированы:** права `0700`, отдельные профили по аккаунтам (Ozon, Авито, WB, почта);
+  шифрование профиля для бэкапа — флаг `BROWSER_PROFILE_ENCRYPTION`
 - **Необратимые действия только с подтверждением:** FSM требует вашего одобрения в Telegram
 - **152-ФЗ:** Определение оператора ПДн, уведомления, трансграничная передача — перед вводом боевых данных
 
@@ -208,4 +208,3 @@ mvp-browser-agent/
 | 1.0.0 | 📋 План | SLA 99.9%, автоматический rollback, полная документация 152-ФЗ |
 
 ---
-

@@ -3,13 +3,13 @@
 Паттерн aiogram 3:
 - Задача как состояние: создано → план → шаг → ждёт вас → готово.
 - Кнопки управления выполнением.
-- Голосовое сообщение → текст (распознавание не подключено: бот отвечает,
-  что голос пока не поддерживается, вместо выдуманной расшифровки).
+- Голосовое сообщение: распознавание не подключено, бот честно просит текст.
 - Необратимые действия только с подтверждением пользователя.
 - Белый список BOT_ADMIN_ID: только владелец может управлять задачами.
 """
 
 import asyncio
+import functools
 import logging
 
 from aiogram import Bot, Dispatcher, F
@@ -68,8 +68,14 @@ def is_admin(user_id: int) -> bool:
 
 
 def admin_only(func):
-    """Декоратор: отклоняет сообщения от неадминистраторов."""
+    """Декоратор: отклоняет сообщения от неадминистраторов.
 
+    functools.wraps обязателен: aiogram 3 строит внедрение аргументов
+    (message, state) по сигнатуре обработчика, а без него видит только
+    *args/**kwargs.
+    """
+
+    @functools.wraps(func)
     async def wrapper(message: Message, *args, **kwargs):
         if not is_admin(message.from_user.id):
             await message.answer("Доступ запрещен.")
@@ -82,6 +88,7 @@ def admin_only(func):
 def admin_only_callback(func):
     """Декоратор для callback-запросов: отклоняет неадминистраторов."""
 
+    @functools.wraps(func)
     async def wrapper(callback: CallbackQuery, *args, **kwargs):
         if not is_admin(callback.from_user.id):
             await callback.answer("Доступ запрещен.")
@@ -96,7 +103,7 @@ def admin_only_callback(func):
 async def cmd_start(message: Message):
     await message.answer(
         "Персональный помощник-покупатель.\n"
-        "Отправьте задачу текстом или голосом. "
+        "Отправьте задачу текстом. "
         "Примеры: «закажи билеты в Сочи», «найди товар на Ozon», «прочти письма».\n\n"
         "Я буду выполнять действия в браузере и запрашивать ваше подтверждение "
         "перед необратимыми действиями (оплата, оформление заказа)."

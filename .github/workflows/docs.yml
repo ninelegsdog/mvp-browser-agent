@@ -15,6 +15,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate markdown
-        run: |
-          pip install markdownlint-cli2
-          npx markdownlint-cli2 '**/*.md' --ignore node_modules
+        # markdownlint-cli2 — npm-пакет; pip его не устанавливает.
+        # Правила и исключения заданы в .markdownlint-cli2.jsonc.
+        run: npx --yes markdownlint-cli2 '**/*.md'
