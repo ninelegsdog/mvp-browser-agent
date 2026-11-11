@@ -96,6 +96,34 @@ class Agent:
     def get_task(self, task_id: str) -> AgentTask | None:
         return self.tasks.get(task_id)
 
+    def add_clarification(self, task_id: str, text: str) -> bool:
+        """Добавить уточнение к незавершённой задаче и пересмотреть план.
+
+        Уточнение — обычное сообщение в чат, а не новая задача: модель получает
+        его в контексте и следующий шаг строит по нему. Неподтверждённое
+        действие при этом отбрасывается: уточнение меняет план, а выполнять
+        необратимый шаг без явного «Подтвердить» нельзя.
+
+        Возвращает False, если задачи нет или она уже завершена — тогда
+        сообщение становится новой задачей.
+        """
+        task = self.get_task(task_id)
+        if task is None or task.state in (TaskState.DONE, TaskState.FAILED):
+            return False
+
+        task.conversation_history.append(
+            {
+                "role": "user",
+                "content": f"Уточнение задачи: {text}",
+            }
+        )
+        task.awaits_user = False
+        task.pending_action = None
+        task.confirmation_prompt = None
+        task.state = TaskState.STEP
+        self._evidence(task).record_step("clarification", {"text": text})
+        return True
+
     async def run(self, task_id: str) -> dict[str, Any]:
         """Главный цикл агента: модель выбирает действия, выполняет их, пересматривает план."""
         task = self.get_task(task_id)

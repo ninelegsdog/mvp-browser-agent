@@ -161,6 +161,20 @@ async def handle_message(message: Message, state: FSMContext):
     if not text.strip():
         await message.answer("Пустая задача: опишите, что нужно сделать.")
         return
+
+    # Незавершённая задача + обычное сообщение = уточнение, а не новая задача.
+    # Иначе «измени план» создаёт вторую задачу, а первая продолжает работать
+    # по старому плану.
+    data = await state.get_data()
+    current_task_id = data.get("current_task_id")
+    if current_task_id and agent.add_clarification(str(current_task_id), text):
+        asyncio.create_task(_run_agent_task(str(current_task_id)))
+        await message.answer(
+            f"Уточнение принято для задачи {current_task_id}. Пересматриваю план.",
+            reply_markup=task_keyboard(str(current_task_id)),
+        )
+        return
+
     task = agent.create_task(str(message.message_id), text)
     await state.update_data(current_task_id=task.task_id)
 

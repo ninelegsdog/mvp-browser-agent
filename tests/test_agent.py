@@ -35,6 +35,39 @@ def test_agent_request_user_confirmation():
     assert task.confirmation_prompt == "подтвердите заказ"
 
 
+def test_clarification_goes_into_task_context_and_drops_unconfirmed_action():
+    """Обычное уточнение меняет план, а не создаёт вторую задачу.
+
+    Неподтверждённое действие при уточнении отбрасывается: иначе модель
+    получила бы новый план, но следом выполнила старый необратимый шаг.
+    """
+    ag = Agent(tools={})
+    task = ag.create_task("t1", "найди товар на Ozon")
+    task.state = TaskState.AWAITS_USER
+    task.awaits_user = True
+    task.confirmation_prompt = "Подтвердите оформление заказа"
+    task.pending_action = {"type": "click", "target": "Оформить заказ"}
+
+    assert ag.add_clarification("t1", "нет, выбери товар дешевле") is True
+
+    assert task.conversation_history == [{"role": "user", "content": "Уточнение задачи: нет, выбери товар дешевле"}]
+    assert task.awaits_user is False
+    assert task.pending_action is None
+    assert task.confirmation_prompt is None
+    assert task.state == TaskState.STEP
+
+
+def test_clarification_for_finished_task_is_a_new_task():
+    """После «готово» уточнять нечего — сообщение становится новой задачей."""
+    ag = Agent(tools={})
+    task = ag.create_task("t1", "найди товар")
+    task.state = TaskState.DONE
+
+    assert ag.add_clarification("t1", "а теперь оформи") is False
+    assert task.conversation_history == []
+    assert ag.add_clarification("missing", "что-нибудь") is False
+
+
 def test_agent_confirm_action():
     """Подтверждение действия пользователем."""
     ag = Agent(tools={})
