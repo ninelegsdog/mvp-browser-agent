@@ -1,5 +1,8 @@
 # --- Build stage ---
-FROM python:3.12-slim AS builder
+# bookworm закреплён намеренно: в trixie `playwright install --with-deps` для
+# версии 1.49 просит ttf-unifont и ttf-ubuntu-font-family, которых там уже нет,
+# и сборка падает на установке браузера.
+FROM python:3.12-slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -21,36 +24,32 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 RUN playwright install --with-deps chromium
 
 # --- Runtime stage ---
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 WORKDIR /app
 
+# PLAYWRIGHT_BROWSERS_PATH: браузеры лежат не в /root — у непривилегированного
+# пользователя туда нет доступа, и Chromium не запустился бы.
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libasound2 \
-    libxss1 \
-    libxtst6 \
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Системные библиотеки для Chromium ставит тот же инструмент, что и в builder.
+# Ручной список пакетов устаревает молча: сборка проходит, браузер не стартует.
+RUN playwright install-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Unprivileged user (UID 1001, соответствие требованиям клиента)
 RUN groupadd -g 1001 appgroup && \
     useradd -u 1001 -g appgroup -m -s /bin/bash appuser
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
 # Copy Playwright browsers from builder
-COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+COPY --from=builder /root/.cache/ms-playwright /ms-playwright
+RUN chown -R appuser:appgroup /ms-playwright
 
 # Copy application code
 COPY --chown=appuser:appgroup . /app
