@@ -1,21 +1,10 @@
 version: 2
 updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "deps:"
-    groups:
-      python-packages:
-        patterns:
-          - "*"
-    ignore:
-      - dependency-name: "playwright"
-        versions: [">=1.49.0,<1.50.0"]  # Требует ручной проверки браузеров
-  - package-ecosystem: "docker"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
